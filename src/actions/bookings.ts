@@ -320,6 +320,85 @@ export async function updateBookingGuest(
   return { success: true };
 }
 
+// ─── Unified booking update ───────────────────────────────────────────────────
+
+const updateBookingSchema = z.object({
+  // Guest
+  guestName:     z.string().min(1).max(100),
+  guestEmail:    z.string().email().optional().or(z.literal("")),
+  guestPhone:    z.string().max(30).optional().or(z.literal("")),
+  // Booking
+  guests:        z.coerce.number().int().min(1).max(50),
+  status:        z.enum(["PENDING", "CONFIRMED", "CANCELLED", "COMPLETED", "CONFLICT"]),
+  source:        z.enum(["MANUAL", "AIRBNB", "BOOKING_COM", "AGODA", "VRBO", "EXPEDIA", "GOOGLE_VR", "OTHER"]),
+  checkIn:       z.string().date(),
+  checkOut:      z.string().date(),
+  // Financial
+  totalAmount:   z.coerce.number().min(0).optional().nullable(),
+  deposit:       z.coerce.number().min(0).optional().nullable(),
+  isPaid:        z.coerce.boolean(),
+  paymentMethod: z.string().max(30).optional().or(z.literal("")),
+  // Notes
+  internalNotes: z.string().max(2000).optional().or(z.literal("")),
+});
+
+export async function updateBooking(bookingId: string, data: unknown): Promise<ActionResult> {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Non autorisé." };
+
+  const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
+  if (!booking) return { error: "Réservation introuvable." };
+
+  try {
+    await requirePropertyAccess(session.user.id, booking.propertyId, "MANAGER");
+  } catch {
+    return { error: "Accès refusé." };
+  }
+
+  const parsed = updateBookingSchema.safeParse(data);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Données invalides." };
+
+  const d = parsed.data;
+
+  if (d.checkOut <= d.checkIn) return { error: "Le départ doit être après l'arrivée." };
+
+  await prisma.$transaction(async (tx) => {
+    // Upsert guest
+    if (booking.guestId) {
+      await tx.guest.update({
+        where: { id: booking.guestId },
+        data: { name: d.guestName, email: d.guestEmail || null, phone: d.guestPhone || null },
+      });
+    } else {
+      const guest = await tx.guest.create({
+        data: { name: d.guestName, email: d.guestEmail || null, phone: d.guestPhone || null },
+      });
+      await tx.booking.update({ where: { id: bookingId }, data: { guestId: guest.id } });
+    }
+
+    await tx.booking.update({
+      where: { id: bookingId },
+      data: {
+        guests:        d.guests,
+        status:        d.status as BookingStatus,
+        source:        d.source as import("@/generated/prisma/enums").BookingSource,
+        checkIn:       new Date(d.checkIn),
+        checkOut:      new Date(d.checkOut),
+        totalAmount:   d.totalAmount ?? null,
+        deposit:       d.deposit ?? null,
+        isPaid:        d.isPaid,
+        paymentMethod: d.paymentMethod || null,
+        internalNotes: d.internalNotes || null,
+      },
+    });
+  });
+
+  revalidatePath(`/bookings/${bookingId}`);
+  revalidatePath("/bookings");
+  revalidatePath(`/properties/${booking.propertyId}/calendar`);
+  return { success: true };
+}
+
 function fmt(d: Date): string {
   return new Date(d).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
 }

@@ -1,15 +1,17 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import {
   getMonthlyRevenue,
   getOccupancyData,
   getSourceDistribution,
   getAnalyticsSummary,
+  getFinancialDashboard,
 } from "@/lib/analytics";
 import { RevenueChart } from "@/components/features/analytics/RevenueChart";
 import { OccupancyChart } from "@/components/features/analytics/OccupancyChart";
 import { SourceChart } from "@/components/features/analytics/SourceChart";
-import { IconTrendingUp, IconTrendingDown, IconBarChart, IconBuilding, IconCalendar, IconStar } from "@/components/ui/icons";
+import { IconTrendingUp, IconTrendingDown, IconBarChart, IconBuilding, IconCalendar, IconStar, IconAlertTriangle } from "@/components/ui/icons";
 
 export default async function AnalyticsPage() {
   const session = await auth();
@@ -18,11 +20,12 @@ export default async function AnalyticsPage() {
   const userId = session.user.id;
   const currentYear = new Date().getFullYear();
 
-  const [revenue, occupancy, sources, summary] = await Promise.all([
+  const [revenue, occupancy, sources, summary, financial] = await Promise.all([
     getMonthlyRevenue(userId, 12),
     getOccupancyData(userId, 12),
     getSourceDistribution(userId, 12),
     getAnalyticsSummary(userId),
+    getFinancialDashboard(userId),
   ]);
 
   const fmt = (n: number) =>
@@ -44,6 +47,97 @@ export default async function AnalyticsPage() {
           </p>
         </div>
       </div>
+
+      {/* ── Dashboard financier ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-7">
+
+        {/* Encaissé ce mois */}
+        <div className="card p-5 animate-slide-up stagger-1">
+          <div className="flex items-center justify-between mb-3">
+            <div className="kpi-icon" style={{ background: "#f0fdf4", color: "#059669" }}>
+              <IconTrendingUp size={18} />
+            </div>
+            <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: "#dcfce7", color: "#15803d" }}>
+              {new Date().toLocaleDateString("fr-FR", { month: "long" })}
+            </span>
+          </div>
+          <p className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+            {fmt(financial.collectedThisMonth)}
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>Encaissé ce mois</p>
+        </div>
+
+        {/* En attente de paiement */}
+        <div className="card p-5 animate-slide-up stagger-2">
+          <div className="flex items-center justify-between mb-3">
+            <div className="kpi-icon" style={{ background: "#fffbeb", color: "#d97706" }}>
+              <IconAlertTriangle size={18} />
+            </div>
+            {financial.pendingCount > 0 && (
+              <Link
+                href="/bookings"
+                className="text-xs px-2 py-0.5 rounded-full font-medium transition-opacity hover:opacity-70"
+                style={{ background: "#fef3c7", color: "#92400e" }}
+              >
+                {financial.pendingCount} rés.
+              </Link>
+            )}
+          </div>
+          <p className="text-2xl font-bold tracking-tight" style={{ color: financial.pendingPayment > 0 ? "#d97706" : "var(--text-primary)" }}>
+            {fmt(financial.pendingPayment)}
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>En attente de paiement</p>
+        </div>
+
+        {/* Revenus par bien */}
+        <div className="card p-5 animate-slide-up stagger-3">
+          <p className="text-xs font-semibold mb-3" style={{ color: "var(--text-tertiary)" }}>Revenus par bien</p>
+          {financial.revenueByProperty.length === 0 ? (
+            <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>Aucune donnée</p>
+          ) : (
+            <div className="space-y-2">
+              {financial.revenueByProperty.slice(0, 4).map(p => {
+                const maxRev = financial.revenueByProperty[0]!.revenue;
+                const pct = maxRev > 0 ? Math.round((p.revenue / maxRev) * 100) : 0;
+                return (
+                  <div key={p.propertyId}>
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-xs truncate max-w-[120px]" style={{ color: "var(--text-secondary)" }}>{p.name}</span>
+                      <span className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{fmt(p.revenue)}</span>
+                    </div>
+                    <div className="stat-bar">
+                      <div className="stat-bar-fill" style={{ width: `${pct}%`, background: "var(--brand)" }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Revenus par plateforme ── */}
+      {financial.revenueBySource.length > 0 && (
+        <div className="card p-5 mb-7 animate-fade-in">
+          <p className="text-xs font-semibold mb-4" style={{ color: "var(--text-tertiary)" }}>Revenus par plateforme</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {financial.revenueBySource.map(s => (
+              <div
+                key={s.source}
+                className="rounded-xl px-4 py-3"
+                style={{ background: "var(--bg)", border: "1px solid var(--border-light)" }}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="w-2 h-2 rounded-full" style={{ background: sourceColor(s.source) }} />
+                  <span className="text-xs font-medium truncate" style={{ color: "var(--text-secondary)" }}>{s.label}</span>
+                </div>
+                <p className="text-base font-bold" style={{ color: "var(--text-primary)" }}>{fmt(s.revenue)}</p>
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>{s.bookings} rés.</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* KPI row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-7">

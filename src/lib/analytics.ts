@@ -225,3 +225,92 @@ export async function getAnalyticsSummary(userId: string): Promise<AnalyticsSumm
       : null,
   };
 }
+
+// ─── Financial dashboard ──────────────────────────────────────────────────────
+
+export type FinancialDashboard = {
+  collectedThisMonth: number;
+  pendingPayment: number;       // total amount of confirmed unpaid bookings
+  pendingCount: number;         // number of unpaid confirmed bookings
+  revenueByProperty: Array<{ propertyId: string; name: string; revenue: number; bookings: number }>;
+  revenueBySource: Array<{ source: string; label: string; revenue: number; bookings: number }>;
+};
+
+export async function getFinancialDashboard(userId: string): Promise<FinancialDashboard> {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+  const [paid, unpaid, all] = await Promise.all([
+    // Paid this month (checkIn falls in current month)
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: { in: ACTIVE_STATUSES },
+        isPaid: true,
+        checkIn: { gte: startOfMonth, lte: endOfMonth },
+      },
+      select: { totalAmount: true },
+    }),
+    // Confirmed but unpaid
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: "CONFIRMED",
+        isPaid: false,
+        totalAmount: { not: null },
+      },
+      select: { totalAmount: true },
+    }),
+    // All confirmed/completed with amount, for breakdowns
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: { in: ACTIVE_STATUSES },
+        totalAmount: { not: null },
+      },
+      select: {
+        totalAmount: true,
+        source: true,
+        propertyId: true,
+        property: { select: { name: true } },
+      },
+    }),
+  ]);
+
+  const collectedThisMonth = Math.round(
+    paid.reduce((s, b) => s + Number(b.totalAmount ?? 0), 0)
+  );
+  const pendingPayment = Math.round(
+    unpaid.reduce((s, b) => s + Number(b.totalAmount ?? 0), 0)
+  );
+
+  // By property
+  const propMap = new Map<string, { name: string; revenue: number; bookings: number }>();
+  for (const b of all) {
+    const prev = propMap.get(b.propertyId) ?? { name: b.property.name, revenue: 0, bookings: 0 };
+    prev.revenue += Number(b.totalAmount ?? 0);
+    prev.bookings++;
+    propMap.set(b.propertyId, prev);
+  }
+  const revenueByProperty = Array.from(propMap.entries())
+    .map(([propertyId, v]) => ({ propertyId, ...v, revenue: Math.round(v.revenue) }))
+    .sort((a, b) => b.revenue - a.revenue);
+
+  // By source
+  const srcMap = new Map<string, { revenue: number; bookings: number }>();
+  for (const b of all) {
+    const prev = srcMap.get(b.source) ?? { revenue: 0, bookings: 0 };
+    prev.revenue += Number(b.totalAmount ?? 0);
+    prev.bookings++;
+    srcMap.set(b.source, prev);
+  }
+  const revenueBySource = Array.from(srcMap.entries())
+    .map(([source, v]) => ({
+      source, label: SOURCE_LABELS[source] ?? source,
+      revenue: Math.round(v.revenue), bookings: v.bookings,
+    }))
+    .sort((a, b) => b.revenue - a.revenue);
+
+  return { collectedThisMonth, pendingPayment, pendingCount: unpaid.length, revenueByProperty, revenueBySource };
+}

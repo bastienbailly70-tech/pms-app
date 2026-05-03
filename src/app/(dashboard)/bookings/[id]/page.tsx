@@ -2,30 +2,15 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { BookingTimeline } from "@/components/features/bookings/BookingTimeline";
-import { BookingPaymentPanel } from "@/components/features/bookings/BookingPaymentPanel";
-import { BookingGuestPanel } from "@/components/features/bookings/BookingGuestPanel";
-import { BookingActions } from "@/components/features/bookings/BookingActions";
+import { BookingEditForm } from "@/components/features/bookings/BookingEditForm";
 import {
-  IconChevronRight, IconAlertTriangle, IconCalendar,
-  IconUsers, IconMapPin, IconCalendarCheck,
+  IconChevronRight, IconAlertTriangle, IconCalendarCheck, IconCalendar,
 } from "@/components/ui/icons";
-import type {
-  BookingModel, BookingConflictModel, GuestModel,
-} from "@/generated/prisma/models";
-
-const STATUS_CONFIG = {
-  CONFIRMED: { label: "Confirmée", pill: "pill-green"  },
-  PENDING:   { label: "En attente", pill: "pill-yellow" },
-  CANCELLED: { label: "Annulée",   pill: "pill-gray"   },
-  COMPLETED: { label: "Terminée",  pill: "pill-blue"   },
-  CONFLICT:  { label: "Conflit",   pill: "pill-red"    },
-};
 
 const SOURCE_LABELS: Record<string, string> = {
   AIRBNB: "Airbnb", BOOKING_COM: "Booking.com", AGODA: "Agoda",
   VRBO: "Vrbo", EXPEDIA: "Expedia", GOOGLE_VR: "Google VR",
-  MANUAL: "Manuel", OTHER: "Autre",
+  MANUAL: "Direct", OTHER: "Autre",
 };
 const SOURCE_COLORS: Record<string, string> = {
   AIRBNB: "#FF385C", BOOKING_COM: "#003580", AGODA: "#E31837",
@@ -43,92 +28,91 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
     include: {
       property: { select: { id: true, name: true, city: true } },
       guest: true,
-      ratePlan: { select: { name: true } },
       conflicts: { orderBy: { createdAt: "asc" } },
     },
   });
 
   if (!booking) notFound();
 
-  const status = STATUS_CONFIG[booking.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.PENDING;
   const nights = Math.round(
     (new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) / 86400000
   );
-  const total = booking.totalAmount ? Number(booking.totalAmount) : null;
+  const total  = booking.totalAmount ? Number(booking.totalAmount) : null;
+  const sourceColor = SOURCE_COLORS[booking.source] ?? "#94a3b8";
   const currency = booking.currency ?? "EUR";
   const fmt = (n: number) =>
     new Intl.NumberFormat("fr-FR", { style: "currency", currency, maximumFractionDigits: 0 }).format(n);
 
-  const sourceColor = SOURCE_COLORS[booking.source] ?? "#94a3b8";
+  // Serialize Prisma Date fields to ISO strings for the client form
+  const initial = {
+    guestName:     booking.guest?.name ?? "",
+    guestEmail:    booking.guest?.email ?? "",
+    guestPhone:    booking.guest?.phone ?? "",
+    guests:        booking.guests,
+    status:        booking.status,
+    source:        booking.source,
+    checkIn:       new Date(booking.checkIn).toISOString().slice(0, 10),
+    checkOut:      new Date(booking.checkOut).toISOString().slice(0, 10),
+    totalAmount:   booking.totalAmount ? String(Number(booking.totalAmount)) : "",
+    deposit:       booking.deposit ? String(Number(booking.deposit)) : "",
+    isPaid:        booking.isPaid,
+    paymentMethod: booking.paymentMethod ?? "",
+    internalNotes: booking.internalNotes ?? "",
+  };
 
   return (
-    <div className="px-8 py-7 max-w-5xl mx-auto animate-fade-in">
+    <div className="px-8 py-7 max-w-4xl mx-auto animate-fade-in">
 
       {/* Breadcrumb */}
       <div className="flex items-center gap-1.5 mb-6">
-        <Link
-          href="/bookings"
-          className="text-sm transition-colors hover:opacity-70"
-          style={{ color: "var(--text-tertiary)" }}
-        >
+        <Link href="/bookings" className="text-sm transition-opacity hover:opacity-70" style={{ color: "var(--text-tertiary)" }}>
           Réservations
         </Link>
-        <IconChevronRight size={13} style={{ color: "var(--text-tertiary)" } as React.CSSProperties} />
+        <IconChevronRight size={13} style={{ color: "var(--text-tertiary)" }} />
         <span className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>
           {booking.guest?.name ?? booking.property.name}
         </span>
       </div>
 
-      {/* Header card */}
-      <div
-        className="card p-6 mb-6"
-        style={{ background: "linear-gradient(135deg, #fafafa 0%, #f5f5f7 100%)" }}
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-4">
-            {/* Source indicator */}
-            <div
-              className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 text-white text-xs font-bold"
-              style={{ background: sourceColor }}
-            >
-              {(SOURCE_LABELS[booking.source] ?? booking.source).slice(0, 2).toUpperCase()}
-            </div>
-            <div>
-              <div className="flex items-center gap-3 flex-wrap mb-1">
-                <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
-                  {booking.guest?.name ?? "Sans nom"}
-                </h1>
-                <span className={`pill ${status.pill}`}>{status.label}</span>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap text-sm" style={{ color: "var(--text-secondary)" }}>
-                <Link
-                  href={`/properties/${booking.property.id}`}
-                  className="flex items-center gap-1 hover:opacity-70 transition-opacity"
-                >
-                  <IconMapPin size={12} style={{ color: "var(--text-tertiary)" } as React.CSSProperties} />
-                  {booking.property.name}
-                  {booking.property.city && ` · ${booking.property.city}`}
-                </Link>
-                <span style={{ color: "var(--border)" }}>·</span>
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className="w-2 h-2 rounded-full"
-                    style={{ background: sourceColor }}
-                  />
-                  {SOURCE_LABELS[booking.source] ?? booking.source}
-                </div>
-                {total && (
-                  <>
-                    <span style={{ color: "var(--border)" }}>·</span>
-                    <span className="font-semibold" style={{ color: "var(--text-primary)" }}>
-                      {fmt(total)}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
+      {/* Header */}
+      <div className="card p-5 mb-6" style={{ background: "linear-gradient(135deg, #fafafa 0%, #f5f5f7 100%)" }}>
+        <div className="flex items-center gap-4">
+          <div
+            className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 text-white text-xs font-bold"
+            style={{ background: sourceColor }}
+          >
+            {(SOURCE_LABELS[booking.source] ?? booking.source).slice(0, 2).toUpperCase()}
           </div>
-          <BookingActions bookingId={booking.id} status={booking.status} />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs mb-0.5" style={{ color: "var(--text-tertiary)" }}>
+              {SOURCE_LABELS[booking.source] ?? booking.source} · {booking.property.name}{booking.property.city ? ` · ${booking.property.city}` : ""}
+            </p>
+            <h1 className="text-xl font-bold truncate" style={{ color: "var(--text-primary)" }}>
+              {booking.guest?.name ?? "Sans nom"} · {nights} nuit{nights > 1 ? "s" : ""}
+            </h1>
+            <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>
+              {new Date(booking.checkIn).toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
+              {" → "}
+              {new Date(booking.checkOut).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}
+              {total ? ` · ${fmt(total)}` : ""}
+            </p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <Link
+              href={`/properties/${booking.property.id}/calendar`}
+              className="btn btn-secondary btn-sm flex items-center gap-1.5"
+            >
+              <IconCalendarCheck size={13} />
+              Calendrier
+            </Link>
+            <Link
+              href={`/properties/${booking.property.id}/platforms`}
+              className="btn btn-secondary btn-sm flex items-center gap-1.5"
+            >
+              <IconCalendar size={13} />
+              Plateformes
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -136,147 +120,23 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
       {booking.status === "CONFLICT" && (
         <Link
           href="/bookings/conflicts"
-          className="flex items-center gap-3 px-5 py-4 mb-6 rounded-2xl border transition-all hover:opacity-90 animate-fade-in"
+          className="flex items-center gap-3 px-5 py-4 mb-6 rounded-2xl border transition-all hover:opacity-90"
           style={{ background: "#fff7f7", borderColor: "#fecaca" }}
         >
-          <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: "#fee2e2", color: "#dc2626" }}
-          >
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: "#fee2e2", color: "#dc2626" }}>
             <IconAlertTriangle size={18} />
           </div>
           <div className="flex-1">
-            <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>
-              Cette réservation est en conflit
-            </p>
-            <p className="text-xs mt-0.5" style={{ color: "#b91c1c" }}>
-              Des dates se chevauchent. Cliquez pour résoudre.
-            </p>
+            <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>Cette réservation est en conflit</p>
+            <p className="text-xs mt-0.5" style={{ color: "#b91c1c" }}>Des dates se chevauchent. Cliquez pour résoudre.</p>
           </div>
-          <IconChevronRight size={16} style={{ color: "#dc2626" } as React.CSSProperties} />
+          <IconChevronRight size={16} style={{ color: "#dc2626" }} />
         </Link>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      {/* Edit form — everything in one place */}
+      <BookingEditForm bookingId={booking.id} initial={initial} />
 
-        {/* Left — main info */}
-        <div className="lg:col-span-2 space-y-5">
-
-          {/* Dates */}
-          <div className="card p-5">
-            <p className="section-title mb-4">Séjour</p>
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <div
-                className="flex flex-col gap-1 p-3 rounded-xl"
-                style={{ background: "var(--bg)" }}
-              >
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Arrivée</p>
-                <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                  {new Date(booking.checkIn).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })}
-                </p>
-              </div>
-              <div
-                className="flex flex-col gap-1 p-3 rounded-xl"
-                style={{ background: "var(--bg)" }}
-              >
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Départ</p>
-                <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                  {new Date(booking.checkOut).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })}
-                </p>
-              </div>
-              <div
-                className="flex flex-col gap-1 p-3 rounded-xl"
-                style={{ background: "var(--bg)" }}
-              >
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Durée</p>
-                <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                  {nights} nuit{nights > 1 ? "s" : ""}
-                </p>
-              </div>
-            </div>
-            <div
-              className="flex items-center gap-4 pt-3"
-              style={{ borderTop: "1px solid var(--border-light)" }}
-            >
-              <div className="flex items-center gap-1.5">
-                <IconUsers size={13} style={{ color: "var(--text-tertiary)" } as React.CSSProperties} />
-                <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                  {booking.guests} voyageur{booking.guests > 1 ? "s" : ""}
-                </span>
-              </div>
-              {booking.ratePlan && (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "var(--brand-light)", color: "var(--brand)" }}>
-                    {booking.ratePlan.name}
-                  </span>
-                </div>
-              )}
-              {total && (
-                <div className="ml-auto">
-                  <span className="text-base font-bold" style={{ color: "var(--text-primary)" }}>
-                    {fmt(total)}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Guest */}
-          <div className="card p-5">
-            <p className="section-title mb-4">Voyageur</p>
-            <BookingGuestPanel
-              bookingId={booking.id}
-              guest={booking.guest as GuestModel | null}
-            />
-          </div>
-
-          {/* Payment */}
-          <div className="card p-5">
-            <p className="section-title mb-4">Paiement</p>
-            <BookingPaymentPanel booking={booking as BookingModel} />
-          </div>
-        </div>
-
-        {/* Right — sidebar */}
-        <div className="space-y-5">
-
-          {/* Timeline */}
-          <div className="card p-5">
-            <p className="section-title mb-4">Historique</p>
-            <BookingTimeline
-              booking={booking as BookingModel}
-              conflicts={booking.conflicts as BookingConflictModel[]}
-            />
-          </div>
-
-          {/* Quick links */}
-          <div className="card p-5">
-            <p className="section-title mb-3">Accès rapide</p>
-            <div className="space-y-1">
-              {[
-                { href: `/properties/${booking.property.id}/calendar`, icon: <IconCalendarCheck size={14} />, label: "Calendrier du bien" },
-                { href: `/properties/${booking.property.id}/platforms`, icon: <IconCalendar size={14} />, label: "Plateformes" },
-                ...(booking.status === "CONFLICT"
-                  ? [{ href: "/bookings/conflicts", icon: <IconAlertTriangle size={14} />, label: "Résoudre le conflit", danger: true }]
-                  : []),
-              ].map(link => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className="flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all hover:bg-[var(--bg)]"
-                  style={{ color: (link as { danger?: boolean }).danger ? "var(--danger)" : "var(--text-secondary)" }}
-                >
-                  <span className="flex items-center gap-2">
-                    {link.icon}
-                    {link.label}
-                  </span>
-                  <IconChevronRight size={13} style={{ opacity: 0.4 } as React.CSSProperties} />
-                </Link>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

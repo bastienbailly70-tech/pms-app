@@ -286,10 +286,11 @@ model Booking {
   checkOut      DateTime      @db.Date
   guests        Int           @default(1)
 
-  totalAmount   Decimal?      @db.Decimal(10, 2)
-  deposit       Decimal?      @db.Decimal(10, 2)
-  currency      String        @default("EUR")
-  isPaid        Boolean       @default(false)
+  totalAmount    Decimal?      @db.Decimal(10, 2)
+  deposit        Decimal?      @db.Decimal(10, 2)
+  currency       String        @default("EUR")
+  isPaid         Boolean       @default(false)
+  paymentMethod  String?
 
   notes         String?
   internalNotes String?
