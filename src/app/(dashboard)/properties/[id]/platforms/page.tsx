@@ -27,7 +27,12 @@ export default async function PlatformsPage({ params }: { params: Promise<{ id: 
 
   if (!property) notFound();
 
-  const exportBaseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  // AUTH_URL (Auth.js v5) ou NEXTAUTH_URL (Railway) — tous deux sont des vars serveur
+  const exportBaseUrl =
+    process.env.AUTH_URL ??
+    process.env.NEXTAUTH_URL ??
+    process.env.NEXT_PUBLIC_APP_URL ??
+    "http://localhost:3000";
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
