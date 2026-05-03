@@ -2,504 +2,307 @@ import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
-  getMonthlyRevenue,
-  getOccupancyData,
-  getSourceDistribution,
-  getAnalyticsSummary,
   getFinancialDashboard,
+  getMonthlyByProperty,
   getFutureRevenue,
+  getOccupancyData,
 } from "@/lib/analytics";
-import { RevenueChart } from "@/components/features/analytics/RevenueChart";
-import { OccupancyChart } from "@/components/features/analytics/OccupancyChart";
-import { SourceChart } from "@/components/features/analytics/SourceChart";
-import { FutureRevenueTable } from "@/components/features/analytics/FutureRevenueTable";
-import { IconTrendingUp, IconTrendingDown, IconBarChart, IconBuilding, IconCalendar, IconStar, IconAlertTriangle, IconSettings } from "@/components/ui/icons";
+import { IconSettings } from "@/components/ui/icons";
 
 export default async function AnalyticsPage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/auth/signin");
 
   const userId = session.user.id;
-  const currentYear = new Date().getFullYear();
+  const now = new Date();
 
-  const [revenue, occupancy, sources, summary, financial, future] = await Promise.all([
-    getMonthlyRevenue(userId, 12),
-    getOccupancyData(userId, 12),
-    getSourceDistribution(userId, 12),
-    getAnalyticsSummary(userId),
+  const [financial, monthly, future, occupancy] = await Promise.all([
     getFinancialDashboard(userId),
+    getMonthlyByProperty(userId),
     getFutureRevenue(userId),
+    getOccupancyData(userId, 1),
   ]);
 
   const fmt = (n: number) =>
     new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 
-  const totalBookings12m = sources.reduce((s, d) => s + d.count, 0);
+  const currentMonthLabel = now.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+
+  const globalOccupancy = (() => {
+    const month = occupancy.data[0];
+    if (!month || occupancy.properties.length === 0) return null;
+    const vals = occupancy.properties.map(p => month.values[p.id] ?? 0);
+    return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+  })();
+
+  const monthlyTotals = monthly.reduce(
+    (acc, r) => ({ gross: acc.gross + r.gross, commission: acc.commission + r.commission, ownerPayout: acc.ownerPayout + r.ownerPayout }),
+    { gross: 0, commission: 0, ownerPayout: 0 }
+  );
 
   return (
-    <div className="px-8 py-7 max-w-6xl mx-auto">
+    <div className="px-8 py-7 max-w-4xl mx-auto">
 
       {/* Header */}
-      <div className="flex items-start justify-between mb-7">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
-            Analytics
-          </h1>
-          <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-            Performance {currentYear - 1} → {currentYear} · {totalBookings12m} réservation{totalBookings12m !== 1 ? "s" : ""} sur 12 mois
-          </p>
-        </div>
+      <div className="flex items-center justify-between mb-7">
+        <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+          Analytics
+        </h1>
+        <Link
+          href="/settings"
+          className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg transition-opacity hover:opacity-70"
+          style={{ background: "var(--bg)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+        >
+          <IconSettings size={13} />
+          Taux {Math.round(financial.commissionRate * 100)}%
+        </Link>
       </div>
 
-      {/* ── Dashboard financier (existant) ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+      {/* ── 4 KPIs ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
 
-        {/* Encaissé ce mois */}
-        <div className="card p-5 animate-slide-up stagger-1">
-          <div className="flex items-center justify-between mb-3">
-            <div className="kpi-icon" style={{ background: "#f0fdf4", color: "#059669" }}>
-              <IconTrendingUp size={18} />
-            </div>
-            <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: "#dcfce7", color: "#15803d" }}>
-              {new Date().toLocaleDateString("fr-FR", { month: "long" })}
-            </span>
-          </div>
-          <p className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
-            {fmt(financial.collectedThisMonth)}
+        <div className="card p-5">
+          <p className="text-xs font-medium mb-2" style={{ color: "var(--text-tertiary)" }}>
+            Notre CA — {now.toLocaleDateString("fr-FR", { month: "long" })}
           </p>
-          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>Encaissé ce mois (brut)</p>
-          {financial.commissionThisMonth > 0 && (
-            <p className="text-xs mt-1 font-medium" style={{ color: "#059669" }}>
-              Net : {fmt(financial.netThisMonth)}
-            </p>
-          )}
-        </div>
-
-        {/* Commission ce mois */}
-        <div className="card p-5 animate-slide-up stagger-2">
-          <div className="flex items-center justify-between mb-3">
-            <div className="kpi-icon" style={{ background: "#fffbeb", color: "#d97706" }}>
-              <IconBarChart size={18} />
-            </div>
-            <Link
-              href="/settings"
-              className="text-xs px-2 py-0.5 rounded-full font-medium transition-opacity hover:opacity-70 flex items-center gap-1"
-              style={{ background: "#fef3c7", color: "#92400e" }}
-            >
-              <IconSettings size={10} />
-              {Math.round(financial.commissionRate * 100)}%
-            </Link>
-          </div>
-          <p className="text-2xl font-bold tracking-tight" style={{ color: "#d97706" }}>
+          <p className="text-4xl font-bold tracking-tight" style={{ color: "#d97706" }}>
             {fmt(financial.commissionThisMonth)}
           </p>
-          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>Commission ce mois</p>
-          <p className="text-xs mt-1 font-medium" style={{ color: "var(--text-tertiary)" }}>
-            Total : {fmt(financial.totalCommissionAllTime)}
+          <p className="text-xs mt-1.5" style={{ color: "var(--text-tertiary)" }}>
+            sur {fmt(financial.collectedThisMonth)} brut
           </p>
         </div>
 
-        {/* En attente de paiement */}
-        <div className="card p-5 animate-slide-up stagger-3">
-          <div className="flex items-center justify-between mb-3">
-            <div className="kpi-icon" style={{ background: "#fef2f2", color: "#dc2626" }}>
-              <IconAlertTriangle size={18} />
-            </div>
-            {financial.pendingCount > 0 && (
-              <Link
-                href="/bookings"
-                className="text-xs px-2 py-0.5 rounded-full font-medium transition-opacity hover:opacity-70"
-                style={{ background: "#fee2e2", color: "#b91c1c" }}
-              >
-                {financial.pendingCount} rés.
-              </Link>
-            )}
-          </div>
-          <p className="text-2xl font-bold tracking-tight" style={{ color: financial.pendingPayment > 0 ? "#dc2626" : "var(--text-primary)" }}>
-            {fmt(financial.pendingPayment)}
+        <div className="card p-5">
+          <p className="text-xs font-medium mb-2" style={{ color: "var(--text-tertiary)" }}>CA total (commissions)</p>
+          <p className="text-4xl font-bold tracking-tight" style={{ color: "#d97706" }}>
+            {fmt(financial.totalCommissionAllTime)}
           </p>
-          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>À encaisser</p>
+          <p className="text-xs mt-1.5" style={{ color: "var(--text-tertiary)" }}>depuis le début</p>
         </div>
 
-        {/* Revenus nets totaux */}
-        <div className="card p-5 animate-slide-up stagger-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="kpi-icon" style={{ background: "#eef2ff", color: "#6366f1" }}>
-              <IconTrendingUp size={18} />
-            </div>
-          </div>
-          <p className="text-2xl font-bold tracking-tight" style={{ color: "var(--brand)" }}>
-            {fmt(financial.totalNetAllTime)}
+        <div className="card p-5">
+          <p className="text-xs font-medium mb-2" style={{ color: "var(--text-tertiary)" }}>
+            À reverser — {now.toLocaleDateString("fr-FR", { month: "long" })}
           </p>
-          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>Revenus nets (total)</p>
-          <p className="text-xs mt-1 font-medium" style={{ color: "var(--text-tertiary)" }}>
-            Après {Math.round(financial.commissionRate * 100)}% de commission
+          <p className="text-4xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+            {fmt(financial.netThisMonth)}
+          </p>
+          <p className="text-xs mt-1.5" style={{ color: "var(--text-tertiary)" }}>aux propriétaires</p>
+        </div>
+
+        <div className="card p-5">
+          <p className="text-xs font-medium mb-2" style={{ color: "var(--text-tertiary)" }}>Taux d'occupation</p>
+          <p className="text-4xl font-bold tracking-tight" style={{ color: "var(--brand)" }}>
+            {globalOccupancy != null ? `${globalOccupancy}%` : "—"}
+          </p>
+          <p className="text-xs mt-1.5" style={{ color: "var(--text-tertiary)" }}>
+            {now.toLocaleDateString("fr-FR", { month: "long" })} · {occupancy.properties.length} bien{occupancy.properties.length > 1 ? "s" : ""}
           </p>
         </div>
       </div>
 
-      {/* ── Revenus par bien + par plateforme (existant) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-7">
-
-        {/* Par bien */}
-        <div className="card p-5 animate-fade-in">
-          <p className="text-xs font-semibold mb-4" style={{ color: "var(--text-tertiary)" }}>Revenus nets par bien</p>
-          {financial.revenueByProperty.length === 0 ? (
-            <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>Aucune donnée</p>
-          ) : (
-            <div className="space-y-3">
-              {financial.revenueByProperty.slice(0, 5).map(p => {
-                const maxNet = financial.revenueByProperty[0]!.net;
-                const pct = maxNet > 0 ? Math.round((p.net / maxNet) * 100) : 0;
-                return (
-                  <div key={p.propertyId}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs truncate max-w-[140px]" style={{ color: "var(--text-secondary)" }}>{p.name}</span>
-                      <div className="text-right shrink-0">
-                        <span className="text-xs font-bold" style={{ color: "var(--text-primary)" }}>{fmt(p.net)}</span>
-                        <span className="text-xs ml-1.5" style={{ color: "var(--text-tertiary)" }}>net</span>
-                      </div>
-                    </div>
-                    <div className="stat-bar">
-                      <div className="stat-bar-fill" style={{ width: `${pct}%`, background: "var(--brand)" }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+      {/* ── Ce mois ── */}
+      <div className="card mb-6">
+        <div className="px-6 py-4 border-b" style={{ borderColor: "var(--border)" }}>
+          <h2 className="font-semibold text-sm capitalize" style={{ color: "var(--text-primary)" }}>
+            Ce mois · {currentMonthLabel}
+          </h2>
         </div>
 
-        {/* Par plateforme */}
-        <div className="card p-5 animate-fade-in">
-          <p className="text-xs font-semibold mb-4" style={{ color: "var(--text-tertiary)" }}>Revenus nets par plateforme</p>
-          {financial.revenueBySource.length === 0 ? (
-            <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>Aucune donnée</p>
-          ) : (
-            <div className="space-y-3">
-              {financial.revenueBySource.map(s => {
-                const maxNet = financial.revenueBySource[0]!.net;
-                const pct = maxNet > 0 ? Math.round((s.net / maxNet) * 100) : 0;
-                return (
-                  <div key={s.source}>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: sourceColor(s.source) }} />
-                        <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{s.label}</span>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <span className="text-xs font-bold" style={{ color: "var(--text-primary)" }}>{fmt(s.net)}</span>
-                        <span className="text-xs ml-1.5" style={{ color: "var(--text-tertiary)" }}>/ {fmt(s.revenue)} brut</span>
-                      </div>
-                    </div>
-                    <div className="stat-bar">
-                      <div className="stat-bar-fill" style={{ width: `${pct}%`, background: sourceColor(s.source) }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Notre CA conciergerie (NOUVEAU) ── */}
-      <div className="card mb-7 animate-fade-in" style={{ border: "1px solid #fde68a" }}>
-        <div className="px-6 py-5 border-b" style={{ borderColor: "#fde68a", background: "#fffbeb", borderRadius: "var(--radius) var(--radius) 0 0" }}>
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="font-semibold text-sm" style={{ color: "#92400e" }}>
-                Notre CA conciergerie
-              </h2>
-              <p className="text-xs mt-0.5" style={{ color: "#b45309" }}>
-                Commissions perçues sur les réservations · taux par bien ({Math.round(financial.commissionRate * 100)}% par défaut)
-              </p>
-            </div>
-            <Link
-              href="/settings"
-              className="text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition-opacity hover:opacity-70"
-              style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}
+        {monthly.length === 0 ? (
+          <p className="px-6 py-8 text-sm text-center" style={{ color: "var(--text-tertiary)" }}>
+            Aucune réservation confirmée ce mois.
+          </p>
+        ) : (
+          <>
+            {/* Table header */}
+            <div
+              className="grid px-6 py-2.5 text-xs font-semibold"
+              style={{
+                gridTemplateColumns: "1fr 80px 110px 110px 110px",
+                color: "var(--text-tertiary)",
+                background: "var(--bg)",
+                borderBottom: "1px solid var(--border-light)",
+              }}
             >
-              <IconSettings size={12} />
-              Modifier le taux
-            </Link>
-          </div>
-        </div>
+              <span>Bien</span>
+              <span className="text-right">Rés.</span>
+              <span className="text-right">Brut</span>
+              <span className="text-right">Notre comm.</span>
+              <span className="text-right">Reversement</span>
+            </div>
 
-        <div className="p-6">
-          {/* 4 KPIs commissions */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="rounded-xl p-4" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
-              <p className="text-xs mb-1" style={{ color: "#b45309" }}>Commissions ce mois</p>
-              <p className="text-xl font-bold" style={{ color: "#d97706" }}>{fmt(financial.commissionThisMonth)}</p>
-              <p className="text-xs mt-0.5" style={{ color: "#b45309" }}>sur {fmt(financial.collectedThisMonth)} brut</p>
+            {/* Rows */}
+            <div className="divide-y" style={{ borderColor: "var(--border-light)" }}>
+              {monthly.map(row => (
+                <div
+                  key={row.propertyId}
+                  className="grid items-center px-6 py-3.5 text-sm"
+                  style={{ gridTemplateColumns: "1fr 80px 110px 110px 110px" }}
+                >
+                  <span className="font-medium truncate pr-4" style={{ color: "var(--text-primary)" }}>
+                    {row.name}
+                  </span>
+                  <span className="text-right" style={{ color: "var(--text-secondary)" }}>
+                    {row.bookings}
+                  </span>
+                  <span className="text-right font-medium" style={{ color: "var(--text-secondary)" }}>
+                    {fmt(row.gross)}
+                  </span>
+                  <span className="text-right font-bold" style={{ color: "#d97706" }}>
+                    {fmt(row.commission)}
+                  </span>
+                  <span className="text-right font-medium" style={{ color: "var(--text-primary)" }}>
+                    {fmt(row.ownerPayout)}
+                  </span>
+                </div>
+              ))}
             </div>
-            <div className="rounded-xl p-4" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
-              <p className="text-xs mb-1" style={{ color: "#b45309" }}>Commissions à venir</p>
-              <p className="text-xl font-bold" style={{ color: "#d97706" }}>{fmt(future.totalCommission)}</p>
-              <p className="text-xs mt-0.5" style={{ color: "#b45309" }}>
-                {future.byMonth.reduce((s, m) => s + m.bookings, 0)} rés. confirmées
-              </p>
-            </div>
-            <div className="rounded-xl p-4" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
-              <p className="text-xs mb-1" style={{ color: "#b45309" }}>CA total depuis le début</p>
-              <p className="text-xl font-bold" style={{ color: "#d97706" }}>{fmt(financial.totalCommissionAllTime)}</p>
-              <p className="text-xs mt-0.5" style={{ color: "#b45309" }}>toutes réservations confondues</p>
-            </div>
-            <div className="rounded-xl p-4" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
-              <p className="text-xs mb-1" style={{ color: "#b45309" }}>Biens gérés</p>
-              <p className="text-xl font-bold" style={{ color: "#d97706" }}>{financial.revenueByProperty.length}</p>
-              <p className="text-xs mt-0.5" style={{ color: "#b45309" }}>avec des réservations</p>
-            </div>
-          </div>
 
-          {/* CA par bien géré */}
-          {financial.revenueByProperty.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold mb-3" style={{ color: "#b45309" }}>Détail par bien géré</p>
-              <div className="space-y-2.5">
-                {financial.revenueByProperty.map(p => {
-                  const maxComm = financial.revenueByProperty[0]!.commission;
-                  const pct = maxComm > 0 ? Math.round((p.commission / maxComm) * 100) : 0;
-                  return (
-                    <div key={p.propertyId}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs truncate max-w-[180px]" style={{ color: "var(--text-secondary)" }}>{p.name}</span>
-                        <div className="flex items-center gap-3 shrink-0">
-                          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>{p.bookings} rés. · {fmt(p.revenue)} brut</span>
-                          <span className="text-xs font-bold" style={{ color: "#d97706" }}>{fmt(p.commission)}</span>
-                        </div>
-                      </div>
-                      <div className="stat-bar">
-                        <div className="stat-bar-fill" style={{ width: `${pct}%`, background: "#d97706" }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+            {/* Total row */}
+            <div
+              className="grid items-center px-6 py-3.5 text-sm font-bold border-t"
+              style={{
+                gridTemplateColumns: "1fr 80px 110px 110px 110px",
+                borderColor: "var(--border)",
+                background: "var(--bg)",
+              }}
+            >
+              <span style={{ color: "var(--text-primary)" }}>Total</span>
+              <span className="text-right" style={{ color: "var(--text-secondary)" }}>
+                {monthly.reduce((s, r) => s + r.bookings, 0)}
+              </span>
+              <span className="text-right" style={{ color: "var(--text-secondary)" }}>
+                {fmt(monthlyTotals.gross)}
+              </span>
+              <span className="text-right" style={{ color: "#d97706" }}>
+                {fmt(monthlyTotals.commission)}
+              </span>
+              <span className="text-right" style={{ color: "var(--text-primary)" }}>
+                {fmt(monthlyTotals.ownerPayout)}
+              </span>
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* KPI row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-7">
-        <KpiCard
-          label={`Revenus ${currentYear}`}
-          value={fmt(summary.revenueThisYear)}
-          growth={summary.revenueGrowth}
-          sub={`${fmt(summary.revenueLastYear)} en ${currentYear - 1}`}
-          icon={<IconTrendingUp size={20} />}
-          iconBg="#f0fdf4" iconColor="#059669"
-          delay="stagger-1"
-        />
-        <KpiCard
-          label={`Réservations ${currentYear}`}
-          value={String(summary.bookingsThisYear)}
-          growth={summary.bookingsGrowth}
-          sub={`${summary.bookingsLastYear} en ${currentYear - 1}`}
-          icon={<IconCalendar size={20} />}
-          iconBg="#eff6ff" iconColor="#2563eb"
-          delay="stagger-2"
-        />
-        <KpiCard
-          label="Biens actifs"
-          value={String(occupancy.properties.length)}
-          sub="connectés au PMS"
-          icon={<IconBuilding size={20} />}
-          iconBg="#eef2ff" iconColor="#6366f1"
-          delay="stagger-3"
-        />
-        <KpiCard
-          label="Top source"
-          value={sources[0]?.label ?? "—"}
-          sub={sources[0] ? `${sources[0].count} rés.` : "Aucune données"}
-          icon={<IconStar size={20} />}
-          iconBg="#fdf4ff" iconColor="#9333ea"
-          delay="stagger-4"
-        />
+          </>
+        )}
       </div>
 
       {/* ── Revenus à venir ── */}
-      <div className="card mb-7 animate-fade-in">
-        <div
-          className="flex items-center justify-between px-6 py-5 border-b"
-          style={{ borderColor: "var(--border)" }}
-        >
+      <div className="card">
+        <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: "var(--border)" }}>
           <div>
-            <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>
-              Revenus à venir
-            </h2>
+            <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Revenus à venir</h2>
             <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>
-              Réservations confirmées · checkIn dans le futur
+              Réservations confirmées · check-in futur
             </p>
           </div>
           {future.byMonth.length > 0 && (
-            <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-5 text-sm shrink-0">
               <div className="text-right hidden sm:block">
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Brut attendu</p>
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Brut</p>
                 <p className="font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(future.totalGross)}</p>
               </div>
               <div className="text-right hidden sm:block">
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Commission</p>
-                <p className="font-semibold" style={{ color: "#d97706" }}>−{fmt(future.totalCommission)}</p>
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Notre CA</p>
+                <p className="font-bold" style={{ color: "#d97706" }}>{fmt(future.totalCommission)}</p>
               </div>
               <div className="text-right">
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Net total</p>
-                <p className="text-base font-bold" style={{ color: "var(--brand)" }}>{fmt(future.totalNet)}</p>
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>À reverser</p>
+                <p className="font-bold" style={{ color: "var(--brand)" }}>{fmt(future.totalNet)}</p>
               </div>
             </div>
           )}
         </div>
-        <div className="p-6">
-          <FutureRevenueTable data={future} />
-        </div>
-      </div>
 
-      {/* Revenue chart */}
-      <div className="card mb-6 animate-fade-in" style={{ animationDelay: "0.1s" }}>
-        <div className="flex items-center justify-between px-6 py-5 border-b" style={{ borderColor: "var(--border)" }}>
+        {future.byMonth.length === 0 ? (
+          <p className="px-6 py-8 text-sm text-center" style={{ color: "var(--text-tertiary)" }}>
+            Aucune réservation confirmée à venir.
+          </p>
+        ) : (
           <div>
-            <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Revenus mensuels</h2>
-            <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>
-              {currentYear - 1} (gris) vs {currentYear} (indigo)
-            </p>
-          </div>
-          {summary.revenueGrowth != null && (
+            {/* Table header */}
             <div
-              className="flex items-center gap-1.5 text-sm font-semibold px-3 py-1.5 rounded-xl"
-              style={summary.revenueGrowth >= 0
-                ? { background: "#dcfce7", color: "#15803d" }
-                : { background: "#fee2e2", color: "#b91c1c" }
-              }
+              className="grid px-6 py-2.5 text-xs font-semibold"
+              style={{
+                gridTemplateColumns: "140px 1fr 80px 80px 100px 100px 100px",
+                color: "var(--text-tertiary)",
+                background: "var(--bg)",
+                borderBottom: "1px solid var(--border-light)",
+              }}
             >
-              {summary.revenueGrowth >= 0
-                ? <IconTrendingUp size={14} />
-                : <IconTrendingDown size={14} />
-              }
-              {summary.revenueGrowth >= 0 ? "+" : ""}{summary.revenueGrowth}% vs {currentYear - 1}
+              <span>Mois</span>
+              <span>Voyageur · Bien</span>
+              <span className="text-right">Dates</span>
+              <span className="text-right">Nuits</span>
+              <span className="text-right">Brut</span>
+              <span className="text-right">Notre CA</span>
+              <span className="text-right">Reversement</span>
             </div>
-          )}
-        </div>
-        <div className="p-6">
-          <RevenueChart data={revenue} />
-        </div>
-      </div>
 
-      {/* Occupancy + Sources */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        {/* Occupancy */}
-        <div className="card animate-fade-in" style={{ animationDelay: "0.15s" }}>
-          <div className="px-6 py-5 border-b" style={{ borderColor: "var(--border)" }}>
-            <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Taux d&apos;occupation</h2>
-            <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>
-              % de nuits occupées par bien
-            </p>
-          </div>
-          <div className="p-6">
-            <OccupancyChart data={occupancy.data} properties={occupancy.properties} />
-          </div>
-        </div>
-
-        {/* Sources */}
-        <div className="card animate-fade-in" style={{ animationDelay: "0.2s" }}>
-          <div className="px-6 py-5 border-b" style={{ borderColor: "var(--border)" }}>
-            <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Répartition par source</h2>
-            <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>
-              {totalBookings12m} réservations · 12 derniers mois
-            </p>
-          </div>
-          <div className="p-6">
-            <SourceChart data={sources} />
-
-            {sources.length > 0 && (
-              <div className="mt-5 space-y-2.5">
-                {sources.map(s => {
-                  const pct = totalBookings12m > 0 ? Math.round((s.count / totalBookings12m) * 100) : 0;
-                  return (
-                    <div key={s.source}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="w-2 h-2 rounded-full"
-                            style={{ background: sourceColor(s.source) }}
-                          />
-                          <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
-                            {s.label}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-                            {s.count} rés.
-                          </span>
-                          {s.revenue > 0 && (
-                            <span className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>
-                              {fmt(s.revenue)}
-                            </span>
-                          )}
-                          <span className="text-xs font-bold w-8 text-right" style={{ color: "var(--text-primary)" }}>
-                            {pct}%
-                          </span>
-                        </div>
-                      </div>
-                      <div className="stat-bar">
-                        <div
-                          className="stat-bar-fill"
-                          style={{ width: `${pct}%`, background: sourceColor(s.source) }}
-                        />
-                      </div>
+            <div className="divide-y" style={{ borderColor: "var(--border-light)" }}>
+              {future.byMonth.map(month =>
+                month.items.map((item, i) => (
+                  <Link
+                    key={item.id}
+                    href={`/bookings/${item.id}`}
+                    className="grid items-center px-6 py-3 text-sm hover:bg-[var(--bg)] transition-colors"
+                    style={{ gridTemplateColumns: "140px 1fr 80px 80px 100px 100px 100px" }}
+                  >
+                    {i === 0 ? (
+                      <span className="text-xs font-semibold capitalize" style={{ color: "var(--text-secondary)" }}>
+                        {month.label}
+                      </span>
+                    ) : (
+                      <span />
+                    )}
+                    <div className="min-w-0 pr-4">
+                      <p className="font-medium truncate" style={{ color: "var(--text-primary)" }}>
+                        {item.guestName ?? <span style={{ color: "var(--text-tertiary)" }}>Sans nom</span>}
+                      </p>
+                      <p className="text-xs truncate" style={{ color: "var(--text-tertiary)" }}>{item.propertyName}</p>
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    <span className="text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
+                      {new Date(item.checkIn).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+                    </span>
+                    <span className="text-right text-xs" style={{ color: "var(--text-secondary)" }}>
+                      {item.nights}n
+                    </span>
+                    <span className="text-right font-medium" style={{ color: "var(--text-secondary)" }}>
+                      {item.gross > 0 ? fmt(item.gross) : "—"}
+                    </span>
+                    <span className="text-right font-bold" style={{ color: "#d97706" }}>
+                      {item.commission > 0 ? fmt(item.commission) : "—"}
+                    </span>
+                    <span className="text-right font-medium" style={{ color: "var(--brand)" }}>
+                      {item.net > 0 ? fmt(item.net) : "—"}
+                    </span>
+                  </Link>
+                ))
+              )}
+            </div>
+
+            {/* Total */}
+            <div
+              className="grid items-center px-6 py-3.5 text-sm font-bold border-t"
+              style={{
+                gridTemplateColumns: "140px 1fr 80px 80px 100px 100px 100px",
+                borderColor: "var(--border)",
+                background: "var(--bg)",
+              }}
+            >
+              <span style={{ color: "var(--text-primary)" }}>Total</span>
+              <span />
+              <span />
+              <span className="text-right" style={{ color: "var(--text-secondary)" }}>
+                {future.byMonth.reduce((s, m) => s + m.bookings, 0)} rés.
+              </span>
+              <span className="text-right" style={{ color: "var(--text-secondary)" }}>{fmt(future.totalGross)}</span>
+              <span className="text-right" style={{ color: "#d97706" }}>{fmt(future.totalCommission)}</span>
+              <span className="text-right" style={{ color: "var(--brand)" }}>{fmt(future.totalNet)}</span>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function sourceColor(source: string) {
-  const map: Record<string, string> = {
-    AIRBNB: "#FF385C", BOOKING_COM: "#003580", AGODA: "#E31837",
-    VRBO: "#3D67FF", EXPEDIA: "#FFC72C", MANUAL: "#6366f1", OTHER: "#94a3b8",
-  };
-  return map[source] ?? "#94a3b8";
-}
-
-function KpiCard({
-  label, value, growth, sub, icon, iconBg, iconColor, delay,
-}: {
-  label: string; value: string;
-  growth?: number | null; sub?: string;
-  icon: React.ReactNode; iconBg: string; iconColor: string;
-  delay?: string;
-}) {
-  return (
-    <div className={`card card-hover p-5 animate-slide-up${delay ? " " + delay : ""}`}>
-      <div className="flex items-start justify-between mb-3">
-        <div className="kpi-icon" style={{ background: iconBg, color: iconColor }}>
-          {icon}
-        </div>
-        {growth != null && (
-          <span
-            className="text-xs font-semibold px-2 py-0.5 rounded-full flex items-center gap-0.5"
-            style={growth >= 0
-              ? { background: "#dcfce7", color: "#15803d" }
-              : { background: "#fee2e2", color: "#b91c1c" }
-            }
-          >
-            {growth >= 0 ? "+" : ""}{growth}%
-          </span>
         )}
       </div>
-      <p className="text-2xl font-bold tracking-tight truncate" style={{ color: "var(--text-primary)" }}>
-        {value}
-      </p>
-      <p className="text-xs mt-0.5 truncate" style={{ color: "var(--text-tertiary)" }}>{label}</p>
-      {sub && <p className="text-xs mt-1 truncate" style={{ color: "var(--text-tertiary)" }}>{sub}</p>}
     </div>
   );
 }

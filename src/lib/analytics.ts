@@ -226,6 +226,64 @@ export async function getAnalyticsSummary(userId: string): Promise<AnalyticsSumm
   };
 }
 
+// ─── Monthly by property ─────────────────────────────────────────────────────
+
+export type MonthlyPropertyRow = {
+  propertyId: string;
+  name: string;
+  bookings: number;
+  gross: number;
+  commission: number;
+  ownerPayout: number;
+};
+
+export async function getMonthlyByProperty(userId: string): Promise<MonthlyPropertyRow[]> {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+  const [dbUser, bookings] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { commissionRate: true } }),
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: { in: ACTIVE_STATUSES },
+        checkIn: { gte: startOfMonth, lte: endOfMonth },
+        totalAmount: { not: null },
+      },
+      select: {
+        totalAmount: true,
+        propertyId: true,
+        property: { select: { name: true, commissionRate: true } },
+      },
+    }),
+  ]);
+
+  const fallbackRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+
+  const propMap = new Map<string, { name: string; revenue: number; commission: number; bookings: number }>();
+  for (const b of bookings) {
+    const prev = propMap.get(b.propertyId) ?? { name: b.property.name, revenue: 0, commission: 0, bookings: 0 };
+    const gross = Number(b.totalAmount ?? 0);
+    const rate = b.property.commissionRate != null ? Number(b.property.commissionRate) : fallbackRate;
+    prev.revenue += gross;
+    prev.commission += gross * rate;
+    prev.bookings++;
+    propMap.set(b.propertyId, prev);
+  }
+
+  return Array.from(propMap.entries())
+    .map(([propertyId, v]) => ({
+      propertyId,
+      name: v.name,
+      bookings: v.bookings,
+      gross: Math.round(v.revenue),
+      commission: Math.round(v.commission),
+      ownerPayout: Math.round(v.revenue - v.commission),
+    }))
+    .sort((a, b) => b.gross - a.gross);
+}
+
 // ─── Future revenue ───────────────────────────────────────────────────────────
 
 export type FutureBookingItem = {

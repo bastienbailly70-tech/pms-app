@@ -3,10 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getAlertCounts } from "@/lib/alerts";
-import { getFutureRevenue } from "@/lib/analytics";
+import { getFinancialDashboard, getFutureRevenue, getOccupancyData } from "@/lib/analytics";
 import {
-  IconBuilding, IconCalendar, IconCalendarCheck, IconUsers,
-  IconAlertTriangle, IconSync, IconArrowUpRight, IconPlus, IconChevronRight,
+  IconBuilding, IconCalendar, IconAlertTriangle, IconSync,
+  IconChevronRight, IconPlus,
 } from "@/components/ui/icons";
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -23,12 +23,8 @@ export default async function DashboardPage() {
   if (!session?.user?.id) redirect("/auth/signin");
 
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
 
-  const [propertyCount, alerts, recentBookings, monthRevenue, lastMonthRevenue, future] = await Promise.all([
-    prisma.property.count({ where: { ownerId: session.user.id } }),
+  const [alerts, recentBookings, financial, future, occupancy] = await Promise.all([
     getAlertCounts(session.user.id),
     prisma.booking.findMany({
       where: { property: { ownerId: session.user.id } },
@@ -37,34 +33,12 @@ export default async function DashboardPage() {
         guest: { select: { name: true } },
       },
       orderBy: { createdAt: "desc" },
-      take: 5,
+      take: 6,
     }),
-    prisma.booking.findMany({
-      where: {
-        property: { ownerId: session.user.id },
-        status: { in: ["CONFIRMED", "COMPLETED"] },
-        checkIn: { gte: startOfMonth },
-        totalAmount: { not: null },
-      },
-      select: { totalAmount: true },
-    }),
-    prisma.booking.findMany({
-      where: {
-        property: { ownerId: session.user.id },
-        status: { in: ["CONFIRMED", "COMPLETED"] },
-        checkIn: { gte: startOfLastMonth, lte: endOfLastMonth },
-        totalAmount: { not: null },
-      },
-      select: { totalAmount: true },
-    }),
+    getFinancialDashboard(session.user.id),
     getFutureRevenue(session.user.id),
+    getOccupancyData(session.user.id, 1),
   ]);
-
-  const currentMonthRevenue = monthRevenue.reduce((s, b) => s + Number(b.totalAmount), 0);
-  const previousMonthRevenue = lastMonthRevenue.reduce((s, b) => s + Number(b.totalAmount), 0);
-  const revenueGrowth = previousMonthRevenue > 0
-    ? Math.round(((currentMonthRevenue - previousMonthRevenue) / previousMonthRevenue) * 100)
-    : null;
 
   const fmt = (n: number) =>
     new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
@@ -76,9 +50,15 @@ export default async function DashboardPage() {
     return "Bonsoir";
   })();
 
-  const todayLabel = now.toLocaleDateString("fr-FR", {
-    weekday: "long", day: "numeric", month: "long", year: "numeric",
-  });
+  const upcomingCount = future.byMonth.reduce((s, m) => s + m.bookings, 0);
+  const nextItem = future.byMonth[0]?.items[0];
+
+  const currentMonthOccupancy = (() => {
+    const month = occupancy.data[0];
+    if (!month || occupancy.properties.length === 0) return null;
+    const vals = occupancy.properties.map(p => month.values[p.id] ?? 0);
+    return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+  })();
 
   const STATUS_PILL: Record<string, string> = {
     CONFIRMED: "pill-green", PENDING: "pill-yellow",
@@ -90,440 +70,191 @@ export default async function DashboardPage() {
   };
 
   return (
-    <div className="px-8 py-7 max-w-6xl mx-auto">
+    <div className="px-8 py-7 max-w-5xl mx-auto">
 
-      {/* ── Hero ──────────────────────────────────────────────────────── */}
-      <div className="flex items-start justify-between mb-8">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-7">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
-            {greeting}, {session.user.name?.split(" ")[0] ?? "vous"} 👋
+          <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+            {greeting}, {session.user.name?.split(" ")[0] ?? "vous"}
           </h1>
-          <p className="mt-1 capitalize" style={{ color: "var(--text-secondary)", fontSize: 14 }}>
-            {todayLabel}
+          <p className="mt-0.5 text-sm capitalize" style={{ color: "var(--text-secondary)" }}>
+            {now.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
           </p>
         </div>
         <Link
           href="/bookings/new"
-          className="flex items-center gap-2 text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-all hover:-translate-y-0.5"
-          style={{
-            background: "var(--brand)",
-            boxShadow: "0 4px 12px rgb(99 102 241 / 0.25)",
-          }}
+          className="flex items-center gap-2 text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-all hover:opacity-90"
+          style={{ background: "var(--brand)", boxShadow: "0 4px 12px rgb(99 102 241 / 0.25)" }}
         >
           <IconPlus size={15} />
           Nouvelle réservation
         </Link>
       </div>
 
-      {/* ── Alert banners ─────────────────────────────────────────────── */}
+      {/* Alertes */}
       {alerts.conflicts > 0 && (
         <Link
           href="/bookings/conflicts"
-          className="flex items-center gap-3 px-4 py-3.5 mb-4 rounded-2xl border transition-all hover:opacity-90 animate-fade-in"
-          style={{
-            background: "#fff7f7",
-            borderColor: "#fecaca",
-          }}
+          className="flex items-center gap-3 px-4 py-3.5 mb-4 rounded-2xl border transition-all hover:opacity-90"
+          style={{ background: "#fff7f7", borderColor: "#fecaca" }}
         >
-          <span
-            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: "#fee2e2", color: "#dc2626" }}
-          >
-            <IconAlertTriangle size={18} />
+          <span className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: "#fee2e2", color: "#dc2626" }}>
+            <IconAlertTriangle size={16} />
           </span>
-          <div className="flex-1">
-            <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>
-              {alerts.conflicts} conflit{alerts.conflicts > 1 ? "s" : ""} de réservation à résoudre
-            </p>
-            <p className="text-xs" style={{ color: "#b91c1c" }}>
-              Des dates se chevauchent sur un ou plusieurs de vos biens.
-            </p>
-          </div>
-          <span style={{ color: "#dc2626" }}><IconChevronRight size={16} /></span>
+          <p className="text-sm font-semibold flex-1" style={{ color: "#991b1b" }}>
+            {alerts.conflicts} conflit{alerts.conflicts > 1 ? "s" : ""} à résoudre
+          </p>
+          <IconChevronRight size={15} style={{ color: "#dc2626" } as React.CSSProperties} />
         </Link>
       )}
       {alerts.syncErrors > 0 && (
         <div
-          className="flex items-center gap-3 px-4 py-3.5 mb-4 rounded-2xl border animate-fade-in"
+          className="flex items-center gap-3 px-4 py-3.5 mb-4 rounded-2xl border"
           style={{ background: "#fffbeb", borderColor: "#fde68a" }}
         >
-          <span
-            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: "#fef3c7", color: "#d97706" }}
-          >
-            <IconSync size={18} />
+          <span className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: "#fef3c7", color: "#d97706" }}>
+            <IconSync size={16} />
           </span>
           <p className="text-sm" style={{ color: "#92400e" }}>
-            <span className="font-semibold">{alerts.syncErrors} erreur{alerts.syncErrors > 1 ? "s" : ""} de synchronisation</span>
-            {" "}dans la dernière heure.
+            <span className="font-semibold">{alerts.syncErrors} erreur{alerts.syncErrors > 1 ? "s" : ""} de sync</span>
           </p>
         </div>
       )}
 
-      {/* ── KPI cards ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <KpiCard
-          label="Biens actifs"
-          value={String(propertyCount)}
-          icon={<IconBuilding size={20} />}
-          iconBg="#eef2ff" iconColor="#6366f1"
-          href="/properties"
-          delay="stagger-1"
-        />
-        <KpiCard
-          label="Revenus ce mois"
-          value={fmt(currentMonthRevenue)}
-          icon={<IconArrowUpRight size={20} />}
-          iconBg="#f0fdf4" iconColor="#059669"
-          trend={revenueGrowth}
-          delay="stagger-2"
-        />
-        <KpiCard
-          label="Check-ins aujourd'hui"
-          value={String(alerts.checkInsToday)}
-          icon={<IconCalendarCheck size={20} />}
-          iconBg="#eff6ff" iconColor="#2563eb"
-          highlight={alerts.checkInsToday > 0}
-          href="/bookings"
-          delay="stagger-3"
-        />
-        <KpiCard
-          label="Check-outs aujourd'hui"
-          value={String(alerts.checkOutsToday)}
-          icon={<IconUsers size={20} />}
-          iconBg="#fdf4ff" iconColor="#9333ea"
-          highlight={alerts.checkOutsToday > 0}
-          href="/bookings"
-          delay="stagger-4"
-        />
+      {/* 4 KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-7">
+
+        {/* Réservations à venir */}
+        <Link href="/bookings" className="card card-hover p-5 animate-slide-up stagger-1 block">
+          <p className="text-xs font-medium mb-3" style={{ color: "var(--text-tertiary)" }}>Réservations à venir</p>
+          <p className="text-4xl font-bold tracking-tight mb-1" style={{ color: "var(--text-primary)" }}>
+            {upcomingCount}
+          </p>
+          {nextItem ? (
+            <p className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>
+              Prochaine : {new Date(nextItem.checkIn).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+              {nextItem.guestName ? ` · ${nextItem.guestName}` : ""}
+            </p>
+          ) : (
+            <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Aucune à venir</p>
+          )}
+        </Link>
+
+        {/* Notre CA ce mois */}
+        <div className="card p-5 animate-slide-up stagger-2">
+          <p className="text-xs font-medium mb-3" style={{ color: "var(--text-tertiary)" }}>Notre CA ce mois</p>
+          <p className="text-4xl font-bold tracking-tight mb-1" style={{ color: "#d97706" }}>
+            {fmt(financial.commissionThisMonth)}
+          </p>
+          <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+            sur {fmt(financial.collectedThisMonth)} brut encaissé
+          </p>
+        </div>
+
+        {/* CA à venir */}
+        <Link href="/analytics" className="card card-hover p-5 animate-slide-up stagger-3 block">
+          <p className="text-xs font-medium mb-3" style={{ color: "var(--text-tertiary)" }}>CA à venir</p>
+          <p className="text-4xl font-bold tracking-tight mb-1" style={{ color: "var(--brand)" }}>
+            {fmt(future.totalCommission)}
+          </p>
+          <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+            {upcomingCount} rés. confirmées futures
+          </p>
+        </Link>
+
+        {/* Taux d'occupation */}
+        <div className="card p-5 animate-slide-up stagger-4">
+          <p className="text-xs font-medium mb-3" style={{ color: "var(--text-tertiary)" }}>Taux d'occupation</p>
+          <p className="text-4xl font-bold tracking-tight mb-1" style={{ color: "var(--text-primary)" }}>
+            {currentMonthOccupancy != null ? `${currentMonthOccupancy}%` : "—"}
+          </p>
+          <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+            {now.toLocaleDateString("fr-FR", { month: "long" })} · {occupancy.properties.length} bien{occupancy.properties.length > 1 ? "s" : ""}
+          </p>
+        </div>
       </div>
 
-      {/* ── Revenus à venir ───────────────────────────────────────────── */}
-      {future.byMonth.length > 0 && (
-        <div
-          className="card mb-6 animate-fade-in"
-          style={{ animationDelay: "0.08s" }}
-        >
-          <div
-            className="flex items-center justify-between px-6 py-4 border-b"
-            style={{ borderColor: "var(--border)" }}
-          >
-            <div className="flex items-center gap-3">
-              <span
-                className="w-8 h-8 rounded-xl flex items-center justify-center"
-                style={{ background: "#eef2ff", color: "#6366f1" }}
-              >
-                <IconArrowUpRight size={16} />
-              </span>
-              <div>
-                <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>
-                  Revenus à venir
-                </p>
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-                  {future.byMonth.reduce((s, m) => s + m.bookings, 0)} réservations confirmées futures
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-5">
-              <div className="hidden sm:flex items-center gap-5 text-sm">
-                <div className="text-right">
-                  <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Brut</p>
-                  <p className="font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(future.totalGross)}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Commission</p>
-                  <p className="font-semibold" style={{ color: "#d97706" }}>−{fmt(future.totalCommission)}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Net attendu</p>
-                  <p className="text-lg font-bold" style={{ color: "var(--brand)" }}>{fmt(future.totalNet)}</p>
-                </div>
-              </div>
-              {/* Mobile: just net */}
-              <div className="sm:hidden text-right">
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Net attendu</p>
-                <p className="text-lg font-bold" style={{ color: "var(--brand)" }}>{fmt(future.totalNet)}</p>
-              </div>
-              <Link
-                href="/analytics"
-                className="btn btn-secondary btn-sm"
-                style={{ whiteSpace: "nowrap" }}
-              >
-                Voir détail
-              </Link>
-            </div>
-          </div>
-
-          {/* Month summary rows */}
-          <div className="divide-y" style={{ borderColor: "var(--border-light)" }}>
-            {future.byMonth.map(month => (
-              <div
-                key={month.month}
-                className="flex items-center justify-between px-6 py-3"
-              >
-                <div className="flex items-center gap-3">
-                  <span
-                    className="text-xs font-semibold px-2 py-0.5 rounded-full capitalize"
-                    style={{ background: "var(--bg)", color: "var(--text-secondary)" }}
-                  >
-                    {month.label}
-                  </span>
-                  <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-                    {month.bookings} rés.
-                  </span>
-                </div>
-                <div className="flex items-center gap-5 text-xs">
-                  <span className="hidden sm:block" style={{ color: "var(--text-secondary)" }}>
-                    brut <span className="font-medium">{fmt(month.gross)}</span>
-                  </span>
-                  <span style={{ color: "#d97706" }}>
-                    comm. <span className="font-medium">−{fmt(month.commission)}</span>
-                  </span>
-                  <span className="font-bold" style={{ color: "#059669" }}>
-                    {fmt(month.net)} net
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+      {/* Check-ins / check-outs aujourd'hui */}
+      {(alerts.checkInsToday > 0 || alerts.checkOutsToday > 0) && (
+        <div className="flex gap-3 mb-6">
+          {alerts.checkInsToday > 0 && (
+            <Link
+              href="/bookings"
+              className="flex-1 flex items-center justify-between px-4 py-3 rounded-2xl border transition-all hover:opacity-90"
+              style={{ background: "#eff6ff", borderColor: "#bfdbfe" }}
+            >
+              <span className="text-sm font-medium" style={{ color: "#1d4ed8" }}>Check-ins aujourd'hui</span>
+              <span className="text-2xl font-bold" style={{ color: "#1d4ed8" }}>{alerts.checkInsToday}</span>
+            </Link>
+          )}
+          {alerts.checkOutsToday > 0 && (
+            <Link
+              href="/bookings"
+              className="flex-1 flex items-center justify-between px-4 py-3 rounded-2xl border transition-all hover:opacity-90"
+              style={{ background: "#fdf4ff", borderColor: "#e9d5ff" }}
+            >
+              <span className="text-sm font-medium" style={{ color: "#7e22ce" }}>Check-outs aujourd'hui</span>
+              <span className="text-2xl font-bold" style={{ color: "#7e22ce" }}>{alerts.checkOutsToday}</span>
+            </Link>
+          )}
         </div>
       )}
 
-      {/* ── Main grid ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Réservations récentes */}
+      <div className="card animate-fade-in">
+        <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: "var(--border)" }}>
+          <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Réservations récentes</h2>
+          <Link href="/bookings" className="text-xs font-medium flex items-center gap-1 hover:opacity-70" style={{ color: "var(--brand)" }}>
+            Voir tout <IconChevronRight size={13} />
+          </Link>
+        </div>
 
-        {/* Recent bookings */}
-        <div className="lg:col-span-2 card animate-fade-in" style={{ animationDelay: "0.1s" }}>
-          <div className="flex items-center justify-between px-6 py-5 border-b" style={{ borderColor: "var(--border)" }}>
-            <div>
-              <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Réservations récentes</h2>
-              <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>5 dernières entrées</p>
+        {recentBookings.length === 0 ? (
+          <div className="py-12 text-center">
+            <div className="w-12 h-12 rounded-2xl mx-auto mb-3 flex items-center justify-center" style={{ background: "var(--bg)" }}>
+              <IconCalendar size={22} style={{ color: "var(--text-tertiary)" } as React.CSSProperties} />
             </div>
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Aucune réservation</p>
             <Link
-              href="/bookings"
-              className="text-xs font-medium flex items-center gap-1 transition-colors hover:opacity-70"
-              style={{ color: "var(--brand)" }}
+              href="/properties"
+              className="inline-flex items-center gap-1.5 mt-3 text-xs font-medium px-3 py-1.5 rounded-lg"
+              style={{ background: "var(--brand-light)", color: "var(--brand)" }}
             >
-              Voir tout <IconChevronRight size={13} />
+              <IconBuilding size={12} /> Gérer les biens
             </Link>
           </div>
-
-          {recentBookings.length === 0 ? (
-            <div className="py-16 text-center">
-              <div
-                className="w-14 h-14 rounded-2xl mx-auto mb-3 flex items-center justify-center"
-                style={{ background: "var(--bg)" }}
-              >
-                <IconCalendar size={24} style={{ color: "var(--text-tertiary)" } as React.CSSProperties} />
-              </div>
-              <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Aucune réservation</p>
-              <p className="text-xs mt-1" style={{ color: "var(--text-tertiary)" }}>
-                Connectez vos plateformes OTA pour démarrer.
-              </p>
+        ) : (
+          <div className="divide-y" style={{ borderColor: "var(--border-light)" }}>
+            {recentBookings.map(b => (
               <Link
-                href="/properties"
-                className="inline-flex items-center gap-1.5 mt-4 text-xs font-medium px-4 py-2 rounded-lg transition-colors"
-                style={{ background: "var(--brand-light)", color: "var(--brand)" }}
+                key={b.id}
+                href={`/bookings/${b.id}`}
+                className="flex items-center gap-4 px-6 py-3.5 hover:bg-[var(--bg)] transition-colors"
               >
-                <IconBuilding size={13} /> Gérer les biens
-              </Link>
-            </div>
-          ) : (
-            <div className="divide-y" style={{ borderColor: "var(--border-light)" }}>
-              {recentBookings.map((b, i) => (
-                <Link
-                  key={b.id}
-                  href={`/bookings/${b.id}`}
-                  className="flex items-center gap-4 px-6 py-4 table-row group"
-                  style={{ animationDelay: `${0.12 + i * 0.04}s` }}
-                >
-                  {/* Source dot */}
-                  <div
-                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ background: SOURCE_COLORS[b.source] ?? "#94a3b8" }}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>
-                      {b.guest?.name ?? "Voyageur inconnu"}
-                    </p>
-                    <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-tertiary)" }}>
-                      {b.property.name} · {SOURCE_LABELS[b.source] ?? b.source}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                      {new Date(b.checkIn).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
-                      {" → "}
-                      {new Date(b.checkOut).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
-                    </p>
-                    <span className={`pill mt-1 ${STATUS_PILL[b.status] ?? "pill-gray"}`}>
-                      {STATUS_LABEL[b.status] ?? b.status}
-                    </span>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Right column */}
-        <div className="space-y-4">
-
-          {/* Quick actions */}
-          <div className="card animate-fade-in" style={{ animationDelay: "0.15s" }}>
-            <div className="px-5 pt-5 pb-3">
-              <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Actions rapides</h2>
-            </div>
-            <div className="px-3 pb-4 space-y-1">
-              {[
-                { href: "/bookings/new", icon: <IconPlus size={15} />, label: "Nouvelle réservation", color: "#6366f1" },
-                { href: "/properties/new", icon: <IconBuilding size={15} />, label: "Ajouter un bien", color: "#0284c7" },
-                { href: "/analytics", icon: <IconArrowUpRight size={15} />, label: "Voir les analytics", color: "#059669" },
-              ].map(a => (
-                <Link
-                  key={a.href}
-                  href={a.href}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all hover:translate-x-0.5 hover:bg-[var(--bg)]"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  <span
-                    className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: a.color + "18", color: a.color }}
-                  >
-                    {a.icon}
+                <div className="w-2 h-2 rounded-full shrink-0" style={{ background: SOURCE_COLORS[b.source] ?? "#94a3b8" }} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>
+                    {b.guest?.name ?? "Voyageur inconnu"}
+                  </p>
+                  <p className="text-xs truncate" style={{ color: "var(--text-tertiary)" }}>
+                    {b.property.name} · {SOURCE_LABELS[b.source] ?? b.source}
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                    {new Date(b.checkIn).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+                    {" → "}
+                    {new Date(b.checkOut).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+                  </p>
+                  <span className={`pill mt-0.5 ${STATUS_PILL[b.status] ?? "pill-gray"}`}>
+                    {STATUS_LABEL[b.status] ?? b.status}
                   </span>
-                  {a.label}
-                  <IconChevronRight size={13} className="ml-auto opacity-40" />
-                </Link>
-              ))}
-            </div>
+                </div>
+              </Link>
+            ))}
           </div>
-
-          {/* Today overview */}
-          <div className="card animate-fade-in" style={{ animationDelay: "0.2s" }}>
-            <div className="px-5 pt-5 pb-2">
-              <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Aujourd'hui</h2>
-            </div>
-            <div className="px-5 pb-5 space-y-3">
-              <TodayStat
-                label="Check-ins"
-                value={alerts.checkInsToday}
-                color="#2563eb"
-                bg="#eff6ff"
-              />
-              <TodayStat
-                label="Check-outs"
-                value={alerts.checkOutsToday}
-                color="#9333ea"
-                bg="#fdf4ff"
-              />
-              {alerts.conflicts > 0 && (
-                <Link href="/bookings/conflicts">
-                  <TodayStat
-                    label="Conflits à résoudre"
-                    value={alerts.conflicts}
-                    color="#dc2626"
-                    bg="#fef2f2"
-                    link
-                  />
-                </Link>
-              )}
-            </div>
-          </div>
-
-          {/* Quick start — only if no properties */}
-          {propertyCount === 0 && (
-            <div
-              className="card animate-fade-in p-5"
-              style={{
-                animationDelay: "0.25s",
-                background: "linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%)",
-                borderColor: "#c7d2fe",
-              }}
-            >
-              <p className="font-semibold text-sm mb-3" style={{ color: "#4338ca" }}>
-                Démarrage rapide
-              </p>
-              <ol className="space-y-2 text-xs" style={{ color: "#4338ca" }}>
-                <li className="flex items-start gap-2">
-                  <span className="w-5 h-5 rounded-full bg-white font-bold flex items-center justify-center shrink-0 text-indigo-600 text-xs">1</span>
-                  <Link href="/properties/new" className="hover:underline font-medium">Créez votre premier bien</Link>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-5 h-5 rounded-full bg-white font-bold flex items-center justify-center shrink-0 text-indigo-600 text-xs">2</span>
-                  <span>Configurez vos disponibilités et tarifs</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-5 h-5 rounded-full bg-white font-bold flex items-center justify-center shrink-0 text-indigo-600 text-xs">3</span>
-                  <span>Connectez vos plateformes OTA</span>
-                </li>
-              </ol>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function KpiCard({
-  label, value, icon, iconBg, iconColor, trend, highlight, href, delay,
-}: {
-  label: string; value: string;
-  icon: React.ReactNode; iconBg: string; iconColor: string;
-  trend?: number | null; highlight?: boolean; href?: string; delay?: string;
-}) {
-  const content = (
-    <div
-      className={`card card-hover p-5 animate-slide-up${delay ? " " + delay : ""}`}
-      style={highlight ? { borderColor: "#c7d2fe" } : undefined}
-    >
-      <div className="flex items-start justify-between mb-3">
-        <div className="kpi-icon" style={{ background: iconBg, color: iconColor }}>
-          {icon}
-        </div>
-        {trend != null && (
-          <span
-            className="text-xs font-semibold px-2 py-0.5 rounded-full flex items-center gap-0.5"
-            style={trend >= 0
-              ? { background: "#dcfce7", color: "#15803d" }
-              : { background: "#fee2e2", color: "#b91c1c" }
-            }
-          >
-            {trend >= 0 ? "+" : ""}{trend}%
-          </span>
         )}
-      </div>
-      <p className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
-        {value}
-      </p>
-      <p className="text-xs mt-1" style={{ color: "var(--text-tertiary)" }}>
-        {label}
-      </p>
-    </div>
-  );
-  if (href) return <Link href={href}>{content}</Link>;
-  return content;
-}
-
-function TodayStat({
-  label, value, color, bg, link,
-}: {
-  label: string; value: number; color: string; bg: string; link?: boolean;
-}) {
-  return (
-    <div
-      className="flex items-center justify-between px-3 py-2.5 rounded-xl"
-      style={{ background: value > 0 ? bg : "var(--bg)" }}
-    >
-      <span className="text-sm" style={{ color: value > 0 ? color : "var(--text-tertiary)" }}>
-        {label}
-      </span>
-      <div className="flex items-center gap-1">
-        <span className="font-bold text-sm" style={{ color: value > 0 ? color : "var(--text-tertiary)" }}>
-          {value}
-        </span>
-        {link && value > 0 && <IconChevronRight size={13} style={{ color } as React.CSSProperties} />}
       </div>
     </div>
   );
