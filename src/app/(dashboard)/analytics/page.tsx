@@ -11,7 +11,7 @@ import {
 import { RevenueChart } from "@/components/features/analytics/RevenueChart";
 import { OccupancyChart } from "@/components/features/analytics/OccupancyChart";
 import { SourceChart } from "@/components/features/analytics/SourceChart";
-import { IconTrendingUp, IconTrendingDown, IconBarChart, IconBuilding, IconCalendar, IconStar, IconAlertTriangle } from "@/components/ui/icons";
+import { IconTrendingUp, IconTrendingDown, IconBarChart, IconBuilding, IconCalendar, IconStar, IconAlertTriangle, IconSettings } from "@/components/ui/icons";
 
 export default async function AnalyticsPage() {
   const session = await auth();
@@ -49,7 +49,7 @@ export default async function AnalyticsPage() {
       </div>
 
       {/* ── Dashboard financier ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-7">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
 
         {/* Encaissé ce mois */}
         <div className="card p-5 animate-slide-up stagger-1">
@@ -64,46 +64,98 @@ export default async function AnalyticsPage() {
           <p className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
             {fmt(financial.collectedThisMonth)}
           </p>
-          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>Encaissé ce mois</p>
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>Encaissé ce mois (brut)</p>
+          {financial.commissionThisMonth > 0 && (
+            <p className="text-xs mt-1 font-medium" style={{ color: "#059669" }}>
+              Net : {fmt(financial.netThisMonth)}
+            </p>
+          )}
         </div>
 
-        {/* En attente de paiement */}
+        {/* Commission ce mois */}
         <div className="card p-5 animate-slide-up stagger-2">
           <div className="flex items-center justify-between mb-3">
             <div className="kpi-icon" style={{ background: "#fffbeb", color: "#d97706" }}>
+              <IconBarChart size={18} />
+            </div>
+            <Link
+              href="/settings"
+              className="text-xs px-2 py-0.5 rounded-full font-medium transition-opacity hover:opacity-70 flex items-center gap-1"
+              style={{ background: "#fef3c7", color: "#92400e" }}
+            >
+              <IconSettings size={10} />
+              {Math.round(financial.commissionRate * 100)}%
+            </Link>
+          </div>
+          <p className="text-2xl font-bold tracking-tight" style={{ color: "#d97706" }}>
+            {fmt(financial.commissionThisMonth)}
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>Commission ce mois</p>
+          <p className="text-xs mt-1 font-medium" style={{ color: "var(--text-tertiary)" }}>
+            Total : {fmt(financial.totalCommissionAllTime)}
+          </p>
+        </div>
+
+        {/* En attente de paiement */}
+        <div className="card p-5 animate-slide-up stagger-3">
+          <div className="flex items-center justify-between mb-3">
+            <div className="kpi-icon" style={{ background: "#fef2f2", color: "#dc2626" }}>
               <IconAlertTriangle size={18} />
             </div>
             {financial.pendingCount > 0 && (
               <Link
                 href="/bookings"
                 className="text-xs px-2 py-0.5 rounded-full font-medium transition-opacity hover:opacity-70"
-                style={{ background: "#fef3c7", color: "#92400e" }}
+                style={{ background: "#fee2e2", color: "#b91c1c" }}
               >
                 {financial.pendingCount} rés.
               </Link>
             )}
           </div>
-          <p className="text-2xl font-bold tracking-tight" style={{ color: financial.pendingPayment > 0 ? "#d97706" : "var(--text-primary)" }}>
+          <p className="text-2xl font-bold tracking-tight" style={{ color: financial.pendingPayment > 0 ? "#dc2626" : "var(--text-primary)" }}>
             {fmt(financial.pendingPayment)}
           </p>
-          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>En attente de paiement</p>
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>À encaisser</p>
         </div>
 
-        {/* Revenus par bien */}
-        <div className="card p-5 animate-slide-up stagger-3">
-          <p className="text-xs font-semibold mb-3" style={{ color: "var(--text-tertiary)" }}>Revenus par bien</p>
+        {/* Revenus nets totaux */}
+        <div className="card p-5 animate-slide-up stagger-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="kpi-icon" style={{ background: "#eef2ff", color: "#6366f1" }}>
+              <IconTrendingUp size={18} />
+            </div>
+          </div>
+          <p className="text-2xl font-bold tracking-tight" style={{ color: "var(--brand)" }}>
+            {fmt(financial.totalNetAllTime)}
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>Revenus nets (total)</p>
+          <p className="text-xs mt-1 font-medium" style={{ color: "var(--text-tertiary)" }}>
+            Après {Math.round(financial.commissionRate * 100)}% de commission
+          </p>
+        </div>
+      </div>
+
+      {/* ── Revenus par bien + par plateforme ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-7">
+
+        {/* Par bien */}
+        <div className="card p-5 animate-fade-in">
+          <p className="text-xs font-semibold mb-4" style={{ color: "var(--text-tertiary)" }}>Revenus nets par bien</p>
           {financial.revenueByProperty.length === 0 ? (
             <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>Aucune donnée</p>
           ) : (
-            <div className="space-y-2">
-              {financial.revenueByProperty.slice(0, 4).map(p => {
-                const maxRev = financial.revenueByProperty[0]!.revenue;
-                const pct = maxRev > 0 ? Math.round((p.revenue / maxRev) * 100) : 0;
+            <div className="space-y-3">
+              {financial.revenueByProperty.slice(0, 5).map(p => {
+                const maxNet = financial.revenueByProperty[0]!.net;
+                const pct = maxNet > 0 ? Math.round((p.net / maxNet) * 100) : 0;
                 return (
                   <div key={p.propertyId}>
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs truncate max-w-[120px]" style={{ color: "var(--text-secondary)" }}>{p.name}</span>
-                      <span className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{fmt(p.revenue)}</span>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs truncate max-w-[140px]" style={{ color: "var(--text-secondary)" }}>{p.name}</span>
+                      <div className="text-right shrink-0">
+                        <span className="text-xs font-bold" style={{ color: "var(--text-primary)" }}>{fmt(p.net)}</span>
+                        <span className="text-xs ml-1.5" style={{ color: "var(--text-tertiary)" }}>net</span>
+                      </div>
                     </div>
                     <div className="stat-bar">
                       <div className="stat-bar-fill" style={{ width: `${pct}%`, background: "var(--brand)" }} />
@@ -114,30 +166,39 @@ export default async function AnalyticsPage() {
             </div>
           )}
         </div>
-      </div>
 
-      {/* ── Revenus par plateforme ── */}
-      {financial.revenueBySource.length > 0 && (
-        <div className="card p-5 mb-7 animate-fade-in">
-          <p className="text-xs font-semibold mb-4" style={{ color: "var(--text-tertiary)" }}>Revenus par plateforme</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {financial.revenueBySource.map(s => (
-              <div
-                key={s.source}
-                className="rounded-xl px-4 py-3"
-                style={{ background: "var(--bg)", border: "1px solid var(--border-light)" }}
-              >
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="w-2 h-2 rounded-full" style={{ background: sourceColor(s.source) }} />
-                  <span className="text-xs font-medium truncate" style={{ color: "var(--text-secondary)" }}>{s.label}</span>
-                </div>
-                <p className="text-base font-bold" style={{ color: "var(--text-primary)" }}>{fmt(s.revenue)}</p>
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>{s.bookings} rés.</p>
-              </div>
-            ))}
-          </div>
+        {/* Par plateforme */}
+        <div className="card p-5 animate-fade-in">
+          <p className="text-xs font-semibold mb-4" style={{ color: "var(--text-tertiary)" }}>Revenus nets par plateforme</p>
+          {financial.revenueBySource.length === 0 ? (
+            <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>Aucune donnée</p>
+          ) : (
+            <div className="space-y-3">
+              {financial.revenueBySource.map(s => {
+                const maxNet = financial.revenueBySource[0]!.net;
+                const pct = maxNet > 0 ? Math.round((s.net / maxNet) * 100) : 0;
+                return (
+                  <div key={s.source}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: sourceColor(s.source) }} />
+                        <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{s.label}</span>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-xs font-bold" style={{ color: "var(--text-primary)" }}>{fmt(s.net)}</span>
+                        <span className="text-xs ml-1.5" style={{ color: "var(--text-tertiary)" }}>/ {fmt(s.revenue)} brut</span>
+                      </div>
+                    </div>
+                    <div className="stat-bar">
+                      <div className="stat-bar-fill" style={{ width: `${pct}%`, background: sourceColor(s.source) }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* KPI row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-7">

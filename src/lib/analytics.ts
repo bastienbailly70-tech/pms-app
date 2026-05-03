@@ -229,11 +229,16 @@ export async function getAnalyticsSummary(userId: string): Promise<AnalyticsSumm
 // ─── Financial dashboard ──────────────────────────────────────────────────────
 
 export type FinancialDashboard = {
+  commissionRate: number;
   collectedThisMonth: number;
-  pendingPayment: number;       // total amount of confirmed unpaid bookings
-  pendingCount: number;         // number of unpaid confirmed bookings
-  revenueByProperty: Array<{ propertyId: string; name: string; revenue: number; bookings: number }>;
-  revenueBySource: Array<{ source: string; label: string; revenue: number; bookings: number }>;
+  commissionThisMonth: number;
+  netThisMonth: number;
+  totalCommissionAllTime: number;
+  totalNetAllTime: number;
+  pendingPayment: number;
+  pendingCount: number;
+  revenueByProperty: Array<{ propertyId: string; name: string; revenue: number; net: number; bookings: number }>;
+  revenueBySource: Array<{ source: string; label: string; revenue: number; net: number; bookings: number }>;
 };
 
 export async function getFinancialDashboard(userId: string): Promise<FinancialDashboard> {
@@ -241,8 +246,8 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
 
-  const [paid, unpaid, all] = await Promise.all([
-    // Paid this month (checkIn falls in current month)
+  const [dbUser, paid, unpaid, all] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { commissionRate: true } }),
     prisma.booking.findMany({
       where: {
         property: { ownerId: userId },
@@ -252,7 +257,6 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
       },
       select: { totalAmount: true },
     }),
-    // Confirmed but unpaid
     prisma.booking.findMany({
       where: {
         property: { ownerId: userId },
@@ -262,7 +266,6 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
       },
       select: { totalAmount: true },
     }),
-    // All confirmed/completed with amount, for breakdowns
     prisma.booking.findMany({
       where: {
         property: { ownerId: userId },
@@ -278,12 +281,19 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
     }),
   ]);
 
-  const collectedThisMonth = Math.round(
-    paid.reduce((s, b) => s + Number(b.totalAmount ?? 0), 0)
-  );
-  const pendingPayment = Math.round(
-    unpaid.reduce((s, b) => s + Number(b.totalAmount ?? 0), 0)
-  );
+  const rate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+
+  const calcNet = (gross: number) => Math.round((gross * (1 - rate)) * 100) / 100;
+
+  const collectedThisMonth = Math.round(paid.reduce((s, b) => s + Number(b.totalAmount ?? 0), 0));
+  const commissionThisMonth = Math.round(collectedThisMonth * rate);
+  const netThisMonth = collectedThisMonth - commissionThisMonth;
+
+  const totalGrossAllTime = Math.round(all.reduce((s, b) => s + Number(b.totalAmount ?? 0), 0));
+  const totalCommissionAllTime = Math.round(totalGrossAllTime * rate);
+  const totalNetAllTime = totalGrossAllTime - totalCommissionAllTime;
+
+  const pendingPayment = Math.round(unpaid.reduce((s, b) => s + Number(b.totalAmount ?? 0), 0));
 
   // By property
   const propMap = new Map<string, { name: string; revenue: number; bookings: number }>();
@@ -294,7 +304,11 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
     propMap.set(b.propertyId, prev);
   }
   const revenueByProperty = Array.from(propMap.entries())
-    .map(([propertyId, v]) => ({ propertyId, ...v, revenue: Math.round(v.revenue) }))
+    .map(([propertyId, v]) => ({
+      propertyId, name: v.name, bookings: v.bookings,
+      revenue: Math.round(v.revenue),
+      net: calcNet(v.revenue),
+    }))
     .sort((a, b) => b.revenue - a.revenue);
 
   // By source
@@ -307,10 +321,22 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
   }
   const revenueBySource = Array.from(srcMap.entries())
     .map(([source, v]) => ({
-      source, label: SOURCE_LABELS[source] ?? source,
-      revenue: Math.round(v.revenue), bookings: v.bookings,
+      source, label: SOURCE_LABELS[source] ?? source, bookings: v.bookings,
+      revenue: Math.round(v.revenue),
+      net: calcNet(v.revenue),
     }))
     .sort((a, b) => b.revenue - a.revenue);
 
-  return { collectedThisMonth, pendingPayment, pendingCount: unpaid.length, revenueByProperty, revenueBySource };
+  return {
+    commissionRate: rate,
+    collectedThisMonth,
+    commissionThisMonth,
+    netThisMonth,
+    totalCommissionAllTime,
+    totalNetAllTime,
+    pendingPayment,
+    pendingCount: unpaid.length,
+    revenueByProperty,
+    revenueBySource,
+  };
 }

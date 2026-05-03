@@ -34,6 +34,7 @@ const PAYMENT_METHODS = [
 
 type Props = {
   bookingId: string;
+  commissionRate: number; // 0–1, e.g. 0.15
   initial: {
     guestName: string;
     guestEmail: string;
@@ -51,7 +52,7 @@ type Props = {
   };
 };
 
-export function BookingEditForm({ bookingId, initial }: Props) {
+export function BookingEditForm({ bookingId, commissionRate, initial }: Props) {
   const [form, setForm] = useState(initial);
   const [saved, setSaved]   = useState(false);
   const [error, setError]   = useState<string | null>(null);
@@ -64,10 +65,13 @@ export function BookingEditForm({ bookingId, initial }: Props) {
     setError(null);
   }
 
-  const total   = parseFloat(form.totalAmount) || 0;
-  const dep     = parseFloat(form.deposit) || 0;
-  const balance = Math.max(0, total - dep);
-  const fmt     = (n: number) =>
+  const total      = parseFloat(form.totalAmount) || 0;
+  const dep        = parseFloat(form.deposit) || 0;
+  const balance    = Math.max(0, total - dep);
+  const commission = Math.round(total * commissionRate * 100) / 100;
+  const netAmount  = Math.round((total - commission) * 100) / 100;
+  const commPct    = Math.round(commissionRate * 100);
+  const fmt        = (n: number) =>
     new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 
   function handleSave() {
@@ -201,22 +205,38 @@ export function BookingEditForm({ bookingId, initial }: Props) {
             style={{ background: "var(--bg)", border: "1px solid var(--border-light)" }}
           >
             <div className="flex justify-between" style={{ color: "var(--text-secondary)" }}>
-              <span>Total</span>
+              <span>Montant brut</span>
               <span className="font-semibold" style={{ color: "var(--text-primary)" }}>{fmt(total)}</span>
             </div>
-            {dep > 0 && (
-              <div className="flex justify-between" style={{ color: "var(--text-secondary)" }}>
-                <span>Acompte reçu</span>
-                <span className="font-semibold text-green-600">−{fmt(dep)}</span>
-              </div>
-            )}
+            <div className="flex justify-between" style={{ color: "var(--text-secondary)" }}>
+              <span>Commission ({commPct}%)</span>
+              <span className="font-medium" style={{ color: "#d97706" }}>− {fmt(commission)}</span>
+            </div>
             <div
               className="flex justify-between font-bold pt-1.5"
-              style={{ borderTop: "1px solid var(--border)", color: balance > 0 ? "#d97706" : "#059669" }}
+              style={{ borderTop: "1px solid var(--border)", color: "#059669" }}
             >
-              <span>Solde restant</span>
-              <span>{fmt(balance)}</span>
+              <span>Montant net</span>
+              <span>{fmt(netAmount)}</span>
             </div>
+            {dep > 0 && (
+              <>
+                <div
+                  className="flex justify-between pt-1.5"
+                  style={{ borderTop: "1px solid var(--border-light)", color: "var(--text-secondary)" }}
+                >
+                  <span>Acompte reçu</span>
+                  <span className="font-medium" style={{ color: "#059669" }}>− {fmt(dep)}</span>
+                </div>
+                <div
+                  className="flex justify-between font-bold"
+                  style={{ color: balance > 0 ? "#d97706" : "#059669" }}
+                >
+                  <span>Solde restant</span>
+                  <span>{fmt(balance)}</span>
+                </div>
+              </>
+            )}
           </div>
         )}
       </section>

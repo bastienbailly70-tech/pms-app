@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notFound, redirect } from "next/navigation";
+
 import Link from "next/link";
 import { BookingEditForm } from "@/components/features/bookings/BookingEditForm";
 import {
@@ -23,16 +24,24 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
 
   const { id } = await params;
 
-  const booking = await prisma.booking.findFirst({
-    where: { id, property: { ownerId: session.user.id } },
-    include: {
-      property: { select: { id: true, name: true, city: true } },
-      guest: true,
-      conflicts: { orderBy: { createdAt: "asc" } },
-    },
-  });
+  const [booking, dbUser] = await Promise.all([
+    prisma.booking.findFirst({
+      where: { id, property: { ownerId: session.user.id } },
+      include: {
+        property: { select: { id: true, name: true, city: true } },
+        guest: true,
+        conflicts: { orderBy: { createdAt: "asc" } },
+      },
+    }),
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { commissionRate: true },
+    }),
+  ]);
 
   if (!booking) notFound();
+
+  const commissionRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
 
   const nights = Math.round(
     (new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) / 86400000
@@ -135,7 +144,7 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
       )}
 
       {/* Edit form — everything in one place */}
-      <BookingEditForm bookingId={booking.id} initial={initial} />
+      <BookingEditForm bookingId={booking.id} commissionRate={commissionRate} initial={initial} />
 
     </div>
   );

@@ -1,15 +1,23 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { prisma } from "@/lib/prisma";
 import {
-  IconSettings, IconUsers, IconBuilding, IconBell, IconSync,
+  IconSettings, IconUsers, IconBuilding, IconBell, IconSync, IconBarChart,
 } from "@/components/ui/icons";
+import { CommissionSettings } from "@/components/features/settings/CommissionSettings";
 
 export default async function SettingsPage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/auth/signin");
 
   const user = session.user;
+  const dbUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { commissionRate: true },
+  });
+  const commissionRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) * 100 : 15;
+
   const initials = (user.name ?? user.email ?? "U")
     .split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
 
@@ -53,26 +61,37 @@ export default async function SettingsPage() {
         >
           <div>
             <label>Nom complet</label>
-            <input
-              className="input"
-              defaultValue={user.name ?? ""}
-              placeholder="Votre nom"
-              disabled
-            />
+            <input className="input" defaultValue={user.name ?? ""} placeholder="Votre nom" disabled />
           </div>
           <div>
             <label>Email</label>
-            <input
-              className="input"
-              defaultValue={user.email ?? ""}
-              type="email"
-              disabled
-            />
+            <input className="input" defaultValue={user.email ?? ""} type="email" disabled />
           </div>
         </div>
         <p className="text-xs mt-3" style={{ color: "var(--text-tertiary)" }}>
           La modification du profil sera disponible prochainement.
         </p>
+      </div>
+
+      {/* Commission */}
+      <div className="card p-6 mb-5">
+        <div className="flex items-center gap-3 mb-5">
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: "#fffbeb", color: "#d97706" }}
+          >
+            <IconBarChart size={18} />
+          </div>
+          <div>
+            <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>
+              Commission
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>
+              Taux appliqué automatiquement sur chaque réservation pour calculer le revenu net.
+            </p>
+          </div>
+        </div>
+        <CommissionSettings initialRate={commissionRate} />
       </div>
 
       {/* Setting sections */}
@@ -122,23 +141,14 @@ export default async function SettingsPage() {
                   {item.icon}
                 </div>
                 <div>
-                  <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>
-                    {item.title}
-                  </p>
-                  <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>
-                    {item.desc}
-                  </p>
+                  <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{item.title}</p>
+                  <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>{item.desc}</p>
                 </div>
               </div>
-              {item.disabled ? (
+              {(item as { disabled?: boolean }).disabled ? (
                 <span className="pill pill-gray shrink-0">{item.cta}</span>
               ) : (
-                <Link
-                  href={item.href}
-                  className="btn btn-secondary btn-sm shrink-0"
-                >
-                  {item.cta}
-                </Link>
+                <Link href={item.href} className="btn btn-secondary btn-sm shrink-0">{item.cta}</Link>
               )}
             </div>
           </div>
@@ -146,20 +156,15 @@ export default async function SettingsPage() {
       </div>
 
       {/* Danger zone */}
-      <div
-        className="card mt-5 p-5"
-        style={{ borderColor: "#fecaca", background: "#fff7f7" }}
-      >
+      <div className="card mt-5 p-5" style={{ borderColor: "#fecaca", background: "#fff7f7" }}>
         <div className="flex items-center gap-3 mb-3">
-          <IconSettings size={16} style={{ color: "var(--danger)" } as React.CSSProperties} />
+          <IconSettings size={16} style={{ color: "var(--danger)" }} />
           <p className="font-semibold text-sm" style={{ color: "var(--danger)" }}>Zone de danger</p>
         </div>
         <p className="text-xs mb-3" style={{ color: "#b91c1c" }}>
           Ces actions sont irréversibles. Procédez avec précaution.
         </p>
-        <button className="btn btn-danger btn-sm" disabled>
-          Supprimer mon compte
-        </button>
+        <button className="btn btn-danger btn-sm" disabled>Supprimer mon compte</button>
       </div>
     </div>
   );
