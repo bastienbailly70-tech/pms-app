@@ -1,0 +1,403 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          UserRole  @default(OWNER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts         Account[]
+  sessions         Session[]
+  properties       Property[]
+  auditLogs        AuditLog[]
+  propertyAccess   PropertyAccess[] @relation("PropertyAccessUser")
+  invitedAccesses  PropertyAccess[] @relation("PropertyAccessInvitedBy")
+  sentInvitations  Invitation[]
+}
+
+enum UserRole {
+  OWNER
+  MANAGER
+  VIEWER
+}
+
+enum PropertyAccessRole {
+  MANAGER
+  VIEWER
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+// ─── Property ────────────────────────────────────────────────────────────────
+
+enum PropertyType {
+  APARTMENT
+  HOUSE
+  VILLA
+  ROOM
+  OTHER
+}
+
+enum PropertyStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+model Property {
+  id          String         @id @default(cuid())
+  ownerId     String
+  name        String
+  type        PropertyType   @default(APARTMENT)
+  status      PropertyStatus @default(ACTIVE)
+  timezone    String         @default("UTC")
+  address     String?
+  city        String?
+  country     String?
+  latitude    Float?
+  longitude   Float?
+
+  // Capacity
+  maxGuests   Int            @default(1)
+  bedrooms    Int            @default(1)
+  beds        Int            @default(1)
+  bathrooms   Int            @default(1)
+  areaSqm     Float?
+
+  // Availability defaults (overridable per season/rate plan)
+  minNights   Int            @default(1)
+  maxNights   Int?
+  gapDays     Int            @default(0)
+
+  // Descriptions (stored as JSON for multilingual)
+  descriptionFr String?
+  descriptionEn String?
+  houseRulesFr  String?
+  houseRulesEn  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner               User                @relation(fields: [ownerId], references: [id])
+  photos              PropertyPhoto[]
+  amenities           PropertyAmenity[]
+  pricingRules        PricingRule[]
+  ratePlans           RatePlan[]
+  blockedDates        BlockedDate[]
+  bookings            Booking[]
+  platformConnections PlatformConnection[]
+  accessList          PropertyAccess[]
+  invitations         Invitation[]
+}
+
+model PropertyPhoto {
+  id           String   @id @default(cuid())
+  propertyId   String
+  cloudinaryId String
+  url          String
+  width        Int?
+  height       Int?
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
+
+// ─── Amenities ───────────────────────────────────────────────────────────────
+
+model Amenity {
+  id         String            @id @default(cuid())
+  key        String            @unique
+  labelFr    String
+  labelEn    String
+  category   String
+
+  properties PropertyAmenity[]
+}
+
+model PropertyAmenity {
+  propertyId String
+  amenityId  String
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  amenity  Amenity  @relation(fields: [amenityId], references: [id])
+
+  @@id([propertyId, amenityId])
+}
+
+// ─── Pricing ─────────────────────────────────────────────────────────────────
+
+enum PricingRuleType {
+  BASE
+  SEASONAL
+  LENGTH_OF_STAY
+  EXTRA_GUEST
+  CLEANING_FEE
+  SECURITY_DEPOSIT
+}
+
+model PricingRule {
+  id         String          @id @default(cuid())
+  propertyId String
+  type       PricingRuleType
+  amount     Decimal         @db.Decimal(10, 2)
+  currency   String          @default("EUR")
+
+  // For SEASONAL rules
+  startDate  DateTime?
+  endDate    DateTime?
+
+  // For LENGTH_OF_STAY discounts
+  minNights  Int?
+  discount   Decimal?        @db.Decimal(5, 2)
+
+  // Per-platform override
+  platform   String?
+
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  property   Property        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
+
+model RatePlan {
+  id           String   @id @default(cuid())
+  propertyId   String
+  name         String
+  descriptionFr String?
+  descriptionEn String?
+  isRefundable Boolean  @default(true)
+  minNights    Int      @default(1)
+  maxNights    Int?
+  multiplier   Decimal  @default(1.0) @db.Decimal(5, 4)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  property     Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  bookings     Booking[]
+}
+
+// ─── Availability ─────────────────────────────────────────────────────────────
+
+model BlockedDate {
+  id         String   @id @default(cuid())
+  propertyId String
+  startDate  DateTime @db.Date
+  endDate    DateTime @db.Date
+  reason     String?
+  isManual   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
+
+// ─── Bookings ────────────────────────────────────────────────────────────────
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  CONFLICT
+}
+
+enum BookingSource {
+  MANUAL
+  AIRBNB
+  BOOKING_COM
+  AGODA
+  VRBO
+  EXPEDIA
+  GOOGLE_VR
+  OTHER
+}
+
+model Guest {
+  id        String    @id @default(cuid())
+  name      String
+  email     String?
+  phone     String?
+  createdAt DateTime  @default(now())
+
+  bookings  Booking[]
+}
+
+model Booking {
+  id            String        @id @default(cuid())
+  propertyId    String
+  guestId       String?
+  ratePlanId    String?
+  externalId    String?
+  source        BookingSource @default(MANUAL)
+  status        BookingStatus @default(PENDING)
+
+  checkIn       DateTime      @db.Date
+  checkOut      DateTime      @db.Date
+  guests        Int           @default(1)
+
+  totalAmount   Decimal?      @db.Decimal(10, 2)
+  deposit       Decimal?      @db.Decimal(10, 2)
+  currency      String        @default("EUR")
+  isPaid        Boolean       @default(false)
+
+  notes         String?
+  internalNotes String?
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  property      Property      @relation(fields: [propertyId], references: [id])
+  guest         Guest?        @relation(fields: [guestId], references: [id])
+  ratePlan      RatePlan?     @relation(fields: [ratePlanId], references: [id])
+  conflicts     BookingConflict[]
+}
+
+model BookingConflict {
+  id          String   @id @default(cuid())
+  bookingId   String
+  description String
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+}
+
+// ─── Channel Manager ─────────────────────────────────────────────────────────
+
+model Platform {
+  id          String               @id @default(cuid())
+  key         String               @unique
+  name        String
+  logoUrl     String?
+  supportsApi Boolean              @default(false)
+
+  connections PlatformConnection[]
+}
+
+model PlatformConnection {
+  id           String    @id @default(cuid())
+  propertyId   String
+  platformId   String
+  icalImportUrl String?
+  icalExportToken String  @unique @default(cuid())
+  isActive     Boolean   @default(true)
+  lastSyncAt   DateTime?
+  lastSyncStatus String?
+  credentials  Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  property     Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  platform     Platform  @relation(fields: [platformId], references: [id])
+  syncLogs     SyncLog[]
+
+  @@unique([propertyId, platformId])
+}
+
+model SyncLog {
+  id           String    @id @default(cuid())
+  connectionId String
+  level        String    @default("info")
+  message      String
+  durationMs   Int?
+  createdAt    DateTime  @default(now())
+
+  connection   PlatformConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+}
+
+// ─── Multi-user access ───────────────────────────────────────────────────────
+
+model PropertyAccess {
+  id          String             @id @default(cuid())
+  userId      String
+  propertyId  String
+  role        PropertyAccessRole @default(VIEWER)
+  invitedById String?
+  createdAt   DateTime           @default(now())
+
+  user        User               @relation("PropertyAccessUser", fields: [userId], references: [id], onDelete: Cascade)
+  property    Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  invitedBy   User?              @relation("PropertyAccessInvitedBy", fields: [invitedById], references: [id])
+
+  @@unique([userId, propertyId])
+}
+
+model Invitation {
+  id          String             @id @default(cuid())
+  email       String
+  propertyId  String
+  role        PropertyAccessRole @default(VIEWER)
+  token       String             @unique
+  invitedById String
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime           @default(now())
+
+  property    Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  invitedBy   User               @relation(fields: [invitedById], references: [id])
+}
+
+// ─── Audit ───────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  entity    String
+  entityId  String
+  changes   Json?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+}
