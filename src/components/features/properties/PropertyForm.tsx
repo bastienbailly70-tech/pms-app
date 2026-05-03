@@ -216,6 +216,43 @@ export function PropertyForm({ property, initialValues }: Props) {
         </div>
       </Section>
 
+      {/* Commission conciergerie */}
+      <Section title="Commission conciergerie">
+        <div className="rounded-xl p-4 mb-4" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
+          <p className="text-xs" style={{ color: "#92400e" }}>
+            <strong>Taux de commission</strong> — Ce pourcentage représente votre part sur chaque réservation.
+            Le propriétaire reçoit le reste. Laissez vide pour utiliser le taux par défaut défini dans les paramètres.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Taux de commission (%)">
+            <div className="relative">
+              <input
+                name="commissionRate"
+                type="number"
+                min={0}
+                max={100}
+                step={0.5}
+                defaultValue={property?.commissionRate != null ? String(Number(property.commissionRate) * 100) : ""}
+                className={inputClass + " pr-8"}
+                placeholder="15 (défaut)"
+              />
+              <span
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-semibold pointer-events-none"
+                style={{ color: "#9ca3af" }}
+              >
+                %
+              </span>
+            </div>
+          </Field>
+          <div className="flex flex-col justify-end">
+            <p className="text-xs" style={{ color: "#6b7280" }}>
+              Ex. : réservation 1 000 € avec 20% → <strong>200 € pour vous</strong>, 800 € pour le propriétaire.
+            </p>
+          </div>
+        </div>
+      </Section>
+
       {/* Règles maison */}
       <Section title="Règles de la maison">
         <div className="space-y-4">

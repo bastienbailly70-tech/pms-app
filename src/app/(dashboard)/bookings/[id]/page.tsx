@@ -28,7 +28,7 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
     prisma.booking.findFirst({
       where: { id, property: { ownerId: session.user.id } },
       include: {
-        property: { select: { id: true, name: true, city: true } },
+        property: { select: { id: true, name: true, city: true, commissionRate: true } },
         guest: true,
         conflicts: { orderBy: { createdAt: "asc" } },
       },
@@ -41,7 +41,10 @@ export default async function BookingDetailPage({ params }: { params: Promise<{ 
 
   if (!booking) notFound();
 
-  const commissionRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+  const fallbackRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+  const commissionRate = booking.property.commissionRate != null
+    ? Number(booking.property.commissionRate)
+    : fallbackRate;
 
   const nights = Math.round(
     (new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) / 86400000

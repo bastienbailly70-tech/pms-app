@@ -51,7 +51,7 @@ export default async function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ── Dashboard financier ── */}
+      {/* ── Dashboard financier (existant) ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
 
         {/* Encaissé ce mois */}
@@ -138,7 +138,7 @@ export default async function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ── Revenus par bien + par plateforme ── */}
+      {/* ── Revenus par bien + par plateforme (existant) ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-7">
 
         {/* Par bien */}
@@ -198,6 +198,85 @@ export default async function AnalyticsPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Notre CA conciergerie (NOUVEAU) ── */}
+      <div className="card mb-7 animate-fade-in" style={{ border: "1px solid #fde68a" }}>
+        <div className="px-6 py-5 border-b" style={{ borderColor: "#fde68a", background: "#fffbeb", borderRadius: "var(--radius) var(--radius) 0 0" }}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold text-sm" style={{ color: "#92400e" }}>
+                Notre CA conciergerie
+              </h2>
+              <p className="text-xs mt-0.5" style={{ color: "#b45309" }}>
+                Commissions perçues sur les réservations · taux par bien ({Math.round(financial.commissionRate * 100)}% par défaut)
+              </p>
+            </div>
+            <Link
+              href="/settings"
+              className="text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition-opacity hover:opacity-70"
+              style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}
+            >
+              <IconSettings size={12} />
+              Modifier le taux
+            </Link>
+          </div>
+        </div>
+
+        <div className="p-6">
+          {/* 4 KPIs commissions */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="rounded-xl p-4" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
+              <p className="text-xs mb-1" style={{ color: "#b45309" }}>Commissions ce mois</p>
+              <p className="text-xl font-bold" style={{ color: "#d97706" }}>{fmt(financial.commissionThisMonth)}</p>
+              <p className="text-xs mt-0.5" style={{ color: "#b45309" }}>sur {fmt(financial.collectedThisMonth)} brut</p>
+            </div>
+            <div className="rounded-xl p-4" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
+              <p className="text-xs mb-1" style={{ color: "#b45309" }}>Commissions à venir</p>
+              <p className="text-xl font-bold" style={{ color: "#d97706" }}>{fmt(future.totalCommission)}</p>
+              <p className="text-xs mt-0.5" style={{ color: "#b45309" }}>
+                {future.byMonth.reduce((s, m) => s + m.bookings, 0)} rés. confirmées
+              </p>
+            </div>
+            <div className="rounded-xl p-4" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
+              <p className="text-xs mb-1" style={{ color: "#b45309" }}>CA total depuis le début</p>
+              <p className="text-xl font-bold" style={{ color: "#d97706" }}>{fmt(financial.totalCommissionAllTime)}</p>
+              <p className="text-xs mt-0.5" style={{ color: "#b45309" }}>toutes réservations confondues</p>
+            </div>
+            <div className="rounded-xl p-4" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
+              <p className="text-xs mb-1" style={{ color: "#b45309" }}>Biens gérés</p>
+              <p className="text-xl font-bold" style={{ color: "#d97706" }}>{financial.revenueByProperty.length}</p>
+              <p className="text-xs mt-0.5" style={{ color: "#b45309" }}>avec des réservations</p>
+            </div>
+          </div>
+
+          {/* CA par bien géré */}
+          {financial.revenueByProperty.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold mb-3" style={{ color: "#b45309" }}>Détail par bien géré</p>
+              <div className="space-y-2.5">
+                {financial.revenueByProperty.map(p => {
+                  const maxComm = financial.revenueByProperty[0]!.commission;
+                  const pct = maxComm > 0 ? Math.round((p.commission / maxComm) * 100) : 0;
+                  return (
+                    <div key={p.propertyId}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs truncate max-w-[180px]" style={{ color: "var(--text-secondary)" }}>{p.name}</span>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>{p.bookings} rés. · {fmt(p.revenue)} brut</span>
+                          <span className="text-xs font-bold" style={{ color: "#d97706" }}>{fmt(p.commission)}</span>
+                        </div>
+                      </div>
+                      <div className="stat-bar">
+                        <div className="stat-bar-fill" style={{ width: `${pct}%`, background: "#d97706" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

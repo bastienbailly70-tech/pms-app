@@ -209,14 +209,14 @@ export function BookingEditForm({ bookingId, commissionRate, initial }: Props) {
               <span className="font-semibold" style={{ color: "var(--text-primary)" }}>{fmt(total)}</span>
             </div>
             <div className="flex justify-between" style={{ color: "var(--text-secondary)" }}>
-              <span>Commission ({commPct}%)</span>
-              <span className="font-medium" style={{ color: "#d97706" }}>− {fmt(commission)}</span>
+              <span>Notre commission ({commPct}%)</span>
+              <span className="font-medium" style={{ color: "#d97706" }}>{fmt(commission)}</span>
             </div>
             <div
               className="flex justify-between font-bold pt-1.5"
               style={{ borderTop: "1px solid var(--border)", color: "#059669" }}
             >
-              <span>Montant net</span>
+              <span>Reversement propriétaire</span>
               <span>{fmt(netAmount)}</span>
             </div>
             {dep > 0 && (

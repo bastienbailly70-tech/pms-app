@@ -23,6 +23,7 @@ const propertySchema = z.object({
   descriptionEn: z.string().max(5000).optional(),
   houseRulesFr: z.string().max(2000).optional(),
   houseRulesEn: z.string().max(2000).optional(),
+  commissionRate: z.coerce.number().min(0).max(100).optional().nullable(),
 });
 
 type ActionResult = { error: string } | { success: true; propertyId: string };
@@ -37,8 +38,13 @@ export async function createProperty(formData: FormData): Promise<ActionResult> 
     return { error: parsed.error.issues[0]?.message ?? "Données invalides." };
   }
 
+  const { commissionRate, ...rest } = parsed.data;
   const property = await prisma.property.create({
-    data: { ...parsed.data, ownerId: session.user.id },
+    data: {
+      ...rest,
+      ownerId: session.user.id,
+      commissionRate: commissionRate != null ? commissionRate / 100 : null,
+    },
   });
 
   revalidatePath("/properties");
@@ -63,9 +69,13 @@ export async function updateProperty(
     return { error: parsed.error.issues[0]?.message ?? "Données invalides." };
   }
 
+  const { commissionRate, ...rest } = parsed.data;
   await prisma.property.update({
     where: { id: propertyId },
-    data: parsed.data,
+    data: {
+      ...rest,
+      commissionRate: commissionRate != null ? commissionRate / 100 : null,
+    },
   });
 
   revalidatePath(`/properties/${propertyId}`);

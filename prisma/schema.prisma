@@ -115,6 +115,9 @@ model Property {
   bathrooms   Int            @default(1)
   areaSqm     Float?
 
+  // Conciergerie commission rate for this property (overrides user default)
+  commissionRate Decimal?    @db.Decimal(5, 4)
+
   // Availability defaults (overridable per season/rate plan)
   minNights   Int            @default(1)
   maxNights   Int?

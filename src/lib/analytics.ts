@@ -272,14 +272,14 @@ export async function getFutureRevenue(userId: string): Promise<FutureRevenue> {
         checkIn: true,
         checkOut: true,
         totalAmount: true,
-        property: { select: { name: true } },
+        property: { select: { name: true, commissionRate: true } },
         guest: { select: { name: true } },
       },
       orderBy: { checkIn: "asc" },
     }),
   ]);
 
-  const rate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+  const fallbackRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
 
   const monthMap = new Map<string, FutureRevenueMonth>();
 
@@ -290,6 +290,7 @@ export async function getFutureRevenue(userId: string): Promise<FutureRevenue> {
     const label = ci.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
     const nights = Math.round((co.getTime() - ci.getTime()) / 86400000);
     const gross  = b.totalAmount ? Number(b.totalAmount) : 0;
+    const rate   = b.property.commissionRate != null ? Number(b.property.commissionRate) : fallbackRate;
     const comm   = Math.round(gross * rate * 100) / 100;
     const net    = Math.round((gross - comm) * 100) / 100;
 
@@ -320,7 +321,7 @@ export async function getFutureRevenue(userId: string): Promise<FutureRevenue> {
   }));
 
   return {
-    commissionRate: rate,
+    commissionRate: fallbackRate,
     totalGross:      Math.round(byMonth.reduce((s, m) => s + m.gross, 0)),
     totalCommission: Math.round(byMonth.reduce((s, m) => s + m.commission, 0)),
     totalNet:        Math.round(byMonth.reduce((s, m) => s + m.net, 0)),
@@ -339,8 +340,8 @@ export type FinancialDashboard = {
   totalNetAllTime: number;
   pendingPayment: number;
   pendingCount: number;
-  revenueByProperty: Array<{ propertyId: string; name: string; revenue: number; net: number; bookings: number }>;
-  revenueBySource: Array<{ source: string; label: string; revenue: number; net: number; bookings: number }>;
+  revenueByProperty: Array<{ propertyId: string; name: string; revenue: number; commission: number; net: number; bookings: number }>;
+  revenueBySource: Array<{ source: string; label: string; revenue: number; commission: number; net: number; bookings: number }>;
 };
 
 export async function getFinancialDashboard(userId: string): Promise<FinancialDashboard> {
@@ -357,7 +358,7 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
         isPaid: true,
         checkIn: { gte: startOfMonth, lte: endOfMonth },
       },
-      select: { totalAmount: true },
+      select: { totalAmount: true, property: { select: { commissionRate: true } } },
     }),
     prisma.booking.findMany({
       where: {
@@ -378,30 +379,39 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
         totalAmount: true,
         source: true,
         propertyId: true,
-        property: { select: { name: true } },
+        property: { select: { name: true, commissionRate: true } },
       },
     }),
   ]);
 
-  const rate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+  const fallbackRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
 
-  const calcNet = (gross: number) => Math.round((gross * (1 - rate)) * 100) / 100;
+  const bookingRate = (propCommissionRate: unknown) =>
+    propCommissionRate != null ? Number(propCommissionRate) : fallbackRate;
 
   const collectedThisMonth = Math.round(paid.reduce((s, b) => s + Number(b.totalAmount ?? 0), 0));
-  const commissionThisMonth = Math.round(collectedThisMonth * rate);
+  const commissionThisMonth = Math.round(
+    paid.reduce((s, b) => s + Number(b.totalAmount ?? 0) * bookingRate(b.property.commissionRate), 0)
+  );
   const netThisMonth = collectedThisMonth - commissionThisMonth;
 
+  let totalCommissionAllTime = 0;
+  for (const b of all) {
+    totalCommissionAllTime += Number(b.totalAmount ?? 0) * bookingRate(b.property.commissionRate);
+  }
+  totalCommissionAllTime = Math.round(totalCommissionAllTime);
   const totalGrossAllTime = Math.round(all.reduce((s, b) => s + Number(b.totalAmount ?? 0), 0));
-  const totalCommissionAllTime = Math.round(totalGrossAllTime * rate);
   const totalNetAllTime = totalGrossAllTime - totalCommissionAllTime;
 
   const pendingPayment = Math.round(unpaid.reduce((s, b) => s + Number(b.totalAmount ?? 0), 0));
 
   // By property
-  const propMap = new Map<string, { name: string; revenue: number; bookings: number }>();
+  const propMap = new Map<string, { name: string; revenue: number; commission: number; bookings: number }>();
   for (const b of all) {
-    const prev = propMap.get(b.propertyId) ?? { name: b.property.name, revenue: 0, bookings: 0 };
-    prev.revenue += Number(b.totalAmount ?? 0);
+    const prev = propMap.get(b.propertyId) ?? { name: b.property.name, revenue: 0, commission: 0, bookings: 0 };
+    const gross = Number(b.totalAmount ?? 0);
+    prev.revenue += gross;
+    prev.commission += gross * bookingRate(b.property.commissionRate);
     prev.bookings++;
     propMap.set(b.propertyId, prev);
   }
@@ -409,15 +419,18 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
     .map(([propertyId, v]) => ({
       propertyId, name: v.name, bookings: v.bookings,
       revenue: Math.round(v.revenue),
-      net: calcNet(v.revenue),
+      commission: Math.round(v.commission),
+      net: Math.round(v.revenue - v.commission),
     }))
     .sort((a, b) => b.revenue - a.revenue);
 
   // By source
-  const srcMap = new Map<string, { revenue: number; bookings: number }>();
+  const srcMap = new Map<string, { revenue: number; commission: number; bookings: number }>();
   for (const b of all) {
-    const prev = srcMap.get(b.source) ?? { revenue: 0, bookings: 0 };
-    prev.revenue += Number(b.totalAmount ?? 0);
+    const prev = srcMap.get(b.source) ?? { revenue: 0, commission: 0, bookings: 0 };
+    const gross = Number(b.totalAmount ?? 0);
+    prev.revenue += gross;
+    prev.commission += gross * bookingRate(b.property.commissionRate);
     prev.bookings++;
     srcMap.set(b.source, prev);
   }
@@ -425,12 +438,13 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
     .map(([source, v]) => ({
       source, label: SOURCE_LABELS[source] ?? source, bookings: v.bookings,
       revenue: Math.round(v.revenue),
-      net: calcNet(v.revenue),
+      commission: Math.round(v.commission),
+      net: Math.round(v.revenue - v.commission),
     }))
     .sort((a, b) => b.revenue - a.revenue);
 
   return {
-    commissionRate: rate,
+    commissionRate: fallbackRate,
     collectedThisMonth,
     commissionThisMonth,
     netThisMonth,
