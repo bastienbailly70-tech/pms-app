@@ -7,10 +7,12 @@ import {
   getSourceDistribution,
   getAnalyticsSummary,
   getFinancialDashboard,
+  getFutureRevenue,
 } from "@/lib/analytics";
 import { RevenueChart } from "@/components/features/analytics/RevenueChart";
 import { OccupancyChart } from "@/components/features/analytics/OccupancyChart";
 import { SourceChart } from "@/components/features/analytics/SourceChart";
+import { FutureRevenueTable } from "@/components/features/analytics/FutureRevenueTable";
 import { IconTrendingUp, IconTrendingDown, IconBarChart, IconBuilding, IconCalendar, IconStar, IconAlertTriangle, IconSettings } from "@/components/ui/icons";
 
 export default async function AnalyticsPage() {
@@ -20,12 +22,13 @@ export default async function AnalyticsPage() {
   const userId = session.user.id;
   const currentYear = new Date().getFullYear();
 
-  const [revenue, occupancy, sources, summary, financial] = await Promise.all([
+  const [revenue, occupancy, sources, summary, financial, future] = await Promise.all([
     getMonthlyRevenue(userId, 12),
     getOccupancyData(userId, 12),
     getSourceDistribution(userId, 12),
     getAnalyticsSummary(userId),
     getFinancialDashboard(userId),
+    getFutureRevenue(userId),
   ]);
 
   const fmt = (n: number) =>
@@ -236,6 +239,42 @@ export default async function AnalyticsPage() {
           iconBg="#fdf4ff" iconColor="#9333ea"
           delay="stagger-4"
         />
+      </div>
+
+      {/* ── Revenus à venir ── */}
+      <div className="card mb-7 animate-fade-in">
+        <div
+          className="flex items-center justify-between px-6 py-5 border-b"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <div>
+            <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>
+              Revenus à venir
+            </h2>
+            <p className="text-xs mt-0.5" style={{ color: "var(--text-tertiary)" }}>
+              Réservations confirmées · checkIn dans le futur
+            </p>
+          </div>
+          {future.byMonth.length > 0 && (
+            <div className="flex items-center gap-4 text-sm">
+              <div className="text-right hidden sm:block">
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Brut attendu</p>
+                <p className="font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(future.totalGross)}</p>
+              </div>
+              <div className="text-right hidden sm:block">
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Commission</p>
+                <p className="font-semibold" style={{ color: "#d97706" }}>−{fmt(future.totalCommission)}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Net total</p>
+                <p className="text-base font-bold" style={{ color: "var(--brand)" }}>{fmt(future.totalNet)}</p>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="p-6">
+          <FutureRevenueTable data={future} />
+        </div>
       </div>
 
       {/* Revenue chart */}

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getAlertCounts } from "@/lib/alerts";
+import { getFutureRevenue } from "@/lib/analytics";
 import {
   IconBuilding, IconCalendar, IconCalendarCheck, IconUsers,
   IconAlertTriangle, IconSync, IconArrowUpRight, IconPlus, IconChevronRight,
@@ -26,7 +27,7 @@ export default async function DashboardPage() {
   const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
 
-  const [propertyCount, alerts, recentBookings, monthRevenue, lastMonthRevenue] = await Promise.all([
+  const [propertyCount, alerts, recentBookings, monthRevenue, lastMonthRevenue, future] = await Promise.all([
     prisma.property.count({ where: { ownerId: session.user.id } }),
     getAlertCounts(session.user.id),
     prisma.booking.findMany({
@@ -56,6 +57,7 @@ export default async function DashboardPage() {
       },
       select: { totalAmount: true },
     }),
+    getFutureRevenue(session.user.id),
   ]);
 
   const currentMonthRevenue = monthRevenue.reduce((s, b) => s + Number(b.totalAmount), 0);
@@ -195,6 +197,97 @@ export default async function DashboardPage() {
           delay="stagger-4"
         />
       </div>
+
+      {/* ── Revenus à venir ───────────────────────────────────────────── */}
+      {future.byMonth.length > 0 && (
+        <div
+          className="card mb-6 animate-fade-in"
+          style={{ animationDelay: "0.08s" }}
+        >
+          <div
+            className="flex items-center justify-between px-6 py-4 border-b"
+            style={{ borderColor: "var(--border)" }}
+          >
+            <div className="flex items-center gap-3">
+              <span
+                className="w-8 h-8 rounded-xl flex items-center justify-center"
+                style={{ background: "#eef2ff", color: "#6366f1" }}
+              >
+                <IconArrowUpRight size={16} />
+              </span>
+              <div>
+                <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>
+                  Revenus à venir
+                </p>
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  {future.byMonth.reduce((s, m) => s + m.bookings, 0)} réservations confirmées futures
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-5">
+              <div className="hidden sm:flex items-center gap-5 text-sm">
+                <div className="text-right">
+                  <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Brut</p>
+                  <p className="font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(future.totalGross)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Commission</p>
+                  <p className="font-semibold" style={{ color: "#d97706" }}>−{fmt(future.totalCommission)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Net attendu</p>
+                  <p className="text-lg font-bold" style={{ color: "var(--brand)" }}>{fmt(future.totalNet)}</p>
+                </div>
+              </div>
+              {/* Mobile: just net */}
+              <div className="sm:hidden text-right">
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Net attendu</p>
+                <p className="text-lg font-bold" style={{ color: "var(--brand)" }}>{fmt(future.totalNet)}</p>
+              </div>
+              <Link
+                href="/analytics"
+                className="btn btn-secondary btn-sm"
+                style={{ whiteSpace: "nowrap" }}
+              >
+                Voir détail
+              </Link>
+            </div>
+          </div>
+
+          {/* Month summary rows */}
+          <div className="divide-y" style={{ borderColor: "var(--border-light)" }}>
+            {future.byMonth.map(month => (
+              <div
+                key={month.month}
+                className="flex items-center justify-between px-6 py-3"
+              >
+                <div className="flex items-center gap-3">
+                  <span
+                    className="text-xs font-semibold px-2 py-0.5 rounded-full capitalize"
+                    style={{ background: "var(--bg)", color: "var(--text-secondary)" }}
+                  >
+                    {month.label}
+                  </span>
+                  <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                    {month.bookings} rés.
+                  </span>
+                </div>
+                <div className="flex items-center gap-5 text-xs">
+                  <span className="hidden sm:block" style={{ color: "var(--text-secondary)" }}>
+                    brut <span className="font-medium">{fmt(month.gross)}</span>
+                  </span>
+                  <span style={{ color: "#d97706" }}>
+                    comm. <span className="font-medium">−{fmt(month.commission)}</span>
+                  </span>
+                  <span className="font-bold" style={{ color: "#059669" }}>
+                    {fmt(month.net)} net
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Main grid ─────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

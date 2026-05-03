@@ -226,6 +226,108 @@ export async function getAnalyticsSummary(userId: string): Promise<AnalyticsSumm
   };
 }
 
+// ─── Future revenue ───────────────────────────────────────────────────────────
+
+export type FutureBookingItem = {
+  id: string;
+  propertyName: string;
+  guestName: string | null;
+  checkIn: string;   // ISO date string
+  checkOut: string;
+  nights: number;
+  gross: number;
+  commission: number;
+  net: number;
+};
+
+export type FutureRevenueMonth = {
+  month: string;   // "2026-05"
+  label: string;   // "Mai 2026"
+  bookings: number;
+  gross: number;
+  commission: number;
+  net: number;
+  items: FutureBookingItem[];
+};
+
+export type FutureRevenue = {
+  commissionRate: number;
+  totalGross: number;
+  totalCommission: number;
+  totalNet: number;
+  byMonth: FutureRevenueMonth[];
+};
+
+export async function getFutureRevenue(userId: string): Promise<FutureRevenue> {
+  const [dbUser, bookings] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { commissionRate: true } }),
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: "CONFIRMED",
+        checkIn: { gte: new Date() },
+      },
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        totalAmount: true,
+        property: { select: { name: true } },
+        guest: { select: { name: true } },
+      },
+      orderBy: { checkIn: "asc" },
+    }),
+  ]);
+
+  const rate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+
+  const monthMap = new Map<string, FutureRevenueMonth>();
+
+  for (const b of bookings) {
+    const ci = new Date(b.checkIn);
+    const co = new Date(b.checkOut);
+    const key   = `${ci.getFullYear()}-${String(ci.getMonth() + 1).padStart(2, "0")}`;
+    const label = ci.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+    const nights = Math.round((co.getTime() - ci.getTime()) / 86400000);
+    const gross  = b.totalAmount ? Number(b.totalAmount) : 0;
+    const comm   = Math.round(gross * rate * 100) / 100;
+    const net    = Math.round((gross - comm) * 100) / 100;
+
+    const slot = monthMap.get(key) ?? { month: key, label, bookings: 0, gross: 0, commission: 0, net: 0, items: [] };
+    slot.bookings++;
+    slot.gross      += gross;
+    slot.commission += comm;
+    slot.net        += net;
+    slot.items.push({
+      id: b.id,
+      propertyName: b.property.name,
+      guestName: b.guest?.name ?? null,
+      checkIn:  ci.toISOString().slice(0, 10),
+      checkOut: co.toISOString().slice(0, 10),
+      nights,
+      gross,
+      commission: comm,
+      net,
+    });
+    monthMap.set(key, slot);
+  }
+
+  const byMonth = Array.from(monthMap.values()).map(m => ({
+    ...m,
+    gross:      Math.round(m.gross),
+    commission: Math.round(m.commission),
+    net:        Math.round(m.net),
+  }));
+
+  return {
+    commissionRate: rate,
+    totalGross:      Math.round(byMonth.reduce((s, m) => s + m.gross, 0)),
+    totalCommission: Math.round(byMonth.reduce((s, m) => s + m.commission, 0)),
+    totalNet:        Math.round(byMonth.reduce((s, m) => s + m.net, 0)),
+    byMonth,
+  };
+}
+
 // ─── Financial dashboard ──────────────────────────────────────────────────────
 
 export type FinancialDashboard = {
