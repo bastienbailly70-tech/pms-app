@@ -514,3 +514,382 @@ export async function getFinancialDashboard(userId: string): Promise<FinancialDa
     revenueBySource,
   };
 }
+
+// ─── Today's activity ─────────────────────────────────────────────────────────
+
+export type TodayArrival = {
+  id: string;
+  guestName: string | null;
+  propertyName: string;
+  nights: number;
+};
+
+export type TodayDeparture = {
+  id: string;
+  guestName: string | null;
+  propertyName: string;
+};
+
+export type TodayActivity = {
+  arrivals: TodayArrival[];
+  departures: TodayDeparture[];
+};
+
+export async function getTodayActivity(userId: string): Promise<TodayActivity> {
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const todayEnd = new Date(todayStart.getTime() + 86400000);
+
+  const [arrivals, departures] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: { in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+        checkIn: { gte: todayStart, lt: todayEnd },
+      },
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        property: { select: { name: true } },
+        guest: { select: { name: true } },
+      },
+      orderBy: { checkIn: "asc" },
+    }),
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: { in: [BookingStatus.CONFIRMED, BookingStatus.COMPLETED] },
+        checkOut: { gte: todayStart, lt: todayEnd },
+      },
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        property: { select: { name: true } },
+        guest: { select: { name: true } },
+      },
+      orderBy: { checkOut: "asc" },
+    }),
+  ]);
+
+  return {
+    arrivals: arrivals.map(b => ({
+      id: b.id,
+      guestName: b.guest?.name ?? null,
+      propertyName: b.property.name,
+      nights: Math.round((new Date(b.checkOut).getTime() - new Date(b.checkIn).getTime()) / 86400000),
+    })),
+    departures: departures.map(b => ({
+      id: b.id,
+      guestName: b.guest?.name ?? null,
+      propertyName: b.property.name,
+    })),
+  };
+}
+
+// ─── 30-day forecast ──────────────────────────────────────────────────────────
+
+export type ForecastWeek = { label: string; gross: number; commission: number };
+
+export type Forecast30Days = {
+  gross: number;
+  commission: number;
+  net: number;
+  bookings: number;
+  byWeek: ForecastWeek[];
+};
+
+export async function get30DayForecast(userId: string): Promise<Forecast30Days> {
+  const now = new Date();
+  const end = new Date(now.getTime() + 30 * 86400000);
+
+  const [dbUser, bookings] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { commissionRate: true } }),
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: BookingStatus.CONFIRMED,
+        checkIn: { gte: now, lte: end },
+        totalAmount: { not: null },
+      },
+      select: {
+        checkIn: true,
+        totalAmount: true,
+        property: { select: { commissionRate: true } },
+      },
+      orderBy: { checkIn: "asc" },
+    }),
+  ]);
+
+  const fallbackRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+
+  const byWeek: ForecastWeek[] = Array.from({ length: 4 }, (_, i) => ({
+    label: `S+${i + 1}`,
+    gross: 0,
+    commission: 0,
+  }));
+
+  let totalGross = 0;
+  let totalCommission = 0;
+
+  for (const b of bookings) {
+    const daysFromNow = Math.floor((new Date(b.checkIn).getTime() - now.getTime()) / 86400000);
+    const weekIndex = Math.min(Math.floor(daysFromNow / 7), 3);
+    const gross = Number(b.totalAmount ?? 0);
+    const rate = b.property.commissionRate != null ? Number(b.property.commissionRate) : fallbackRate;
+    const comm = gross * rate;
+    const week = byWeek[weekIndex];
+    if (week) {
+      week.gross += gross;
+      week.commission += comm;
+    }
+    totalGross += gross;
+    totalCommission += comm;
+  }
+
+  return {
+    gross: Math.round(totalGross),
+    commission: Math.round(totalCommission),
+    net: Math.round(totalGross - totalCommission),
+    bookings: bookings.length,
+    byWeek: byWeek.map(w => ({ ...w, gross: Math.round(w.gross), commission: Math.round(w.commission) })),
+  };
+}
+
+// ─── Month comparison ─────────────────────────────────────────────────────────
+
+export type MonthComparison = {
+  currentGross: number;
+  previousGross: number;
+  grossGrowth: number | null;
+  currentCommission: number;
+  previousCommission: number;
+  commissionGrowth: number | null;
+  currentNet: number;
+  previousNet: number;
+  netGrowth: number | null;
+  revpar: number;
+  ticketMoyen: number;
+  bookingsCount: number;
+};
+
+export async function getMonthComparison(userId: string): Promise<MonthComparison> {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfPrevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const endOfPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+  const [dbUser, currentBookings, previousBookings, propCount] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { commissionRate: true } }),
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: { in: ACTIVE_STATUSES },
+        checkIn: { gte: startOfMonth },
+        totalAmount: { not: null },
+      },
+      select: { totalAmount: true, property: { select: { commissionRate: true } } },
+    }),
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: { in: ACTIVE_STATUSES },
+        checkIn: { gte: startOfPrevMonth, lte: endOfPrevMonth },
+        totalAmount: { not: null },
+      },
+      select: { totalAmount: true, property: { select: { commissionRate: true } } },
+    }),
+    prisma.property.count({ where: { ownerId: userId, status: PropertyStatus.ACTIVE } }),
+  ]);
+
+  const fallbackRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+
+  const calcTotals = (bks: typeof currentBookings) => {
+    let gross = 0, commission = 0;
+    for (const b of bks) {
+      const g = Number(b.totalAmount ?? 0);
+      const r = b.property.commissionRate != null ? Number(b.property.commissionRate) : fallbackRate;
+      gross += g;
+      commission += g * r;
+    }
+    return { gross: Math.round(gross), commission: Math.round(commission), net: Math.round(gross - commission) };
+  };
+
+  const current = calcTotals(currentBookings);
+  const previous = calcTotals(previousBookings);
+  const growth = (curr: number, prev: number) =>
+    prev > 0 ? Math.round(((curr - prev) / prev) * 100) : null;
+
+  const availableNights = propCount * daysInMonth;
+  const revpar = availableNights > 0 ? Math.round((current.gross / availableNights) * 10) / 10 : 0;
+  const ticketMoyen = currentBookings.length > 0 ? Math.round(current.gross / currentBookings.length) : 0;
+
+  return {
+    currentGross: current.gross,
+    previousGross: previous.gross,
+    grossGrowth: growth(current.gross, previous.gross),
+    currentCommission: current.commission,
+    previousCommission: previous.commission,
+    commissionGrowth: growth(current.commission, previous.commission),
+    currentNet: current.net,
+    previousNet: previous.net,
+    netGrowth: growth(current.net, previous.net),
+    revpar,
+    ticketMoyen,
+    bookingsCount: currentBookings.length,
+  };
+}
+
+// ─── Property performance table ───────────────────────────────────────────────
+
+export type PropertyPerformanceRow = {
+  propertyId: string;
+  name: string;
+  occupancyPct: number;
+  gross: number;
+  commission: number;
+  ownerPayout: number;
+  revpar: number;
+  bookings: number;
+};
+
+export async function getPropertyPerformanceTable(userId: string): Promise<PropertyPerformanceRow[]> {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const daysInMonth = endOfMonth.getDate();
+
+  const [dbUser, properties, bookings] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { commissionRate: true } }),
+    prisma.property.findMany({
+      where: { ownerId: userId },
+      select: { id: true, name: true, commissionRate: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: { in: ACTIVE_STATUSES },
+        checkOut: { gte: startOfMonth },
+        checkIn: { lte: endOfMonth },
+      },
+      select: {
+        propertyId: true,
+        checkIn: true,
+        checkOut: true,
+        totalAmount: true,
+        property: { select: { commissionRate: true } },
+      },
+    }),
+  ]);
+
+  const fallbackRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+
+  return properties.map(prop => {
+    const propBookings = bookings.filter(b => b.propertyId === prop.id);
+
+    let occupiedNights = 0;
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(now.getFullYear(), now.getMonth(), day);
+      const occupied = propBookings.some(b => {
+        const ci = new Date(b.checkIn);
+        const co = new Date(b.checkOut);
+        return ci <= date && date < co;
+      });
+      if (occupied) occupiedNights++;
+    }
+
+    const financialBookings = propBookings.filter(b => {
+      const ci = new Date(b.checkIn);
+      return ci >= startOfMonth && ci <= endOfMonth && b.totalAmount != null;
+    });
+
+    let gross = 0, commission = 0;
+    for (const b of financialBookings) {
+      const g = Number(b.totalAmount ?? 0);
+      const r = b.property.commissionRate != null ? Number(b.property.commissionRate) : fallbackRate;
+      gross += g;
+      commission += g * r;
+    }
+
+    const grossR = Math.round(gross);
+    const commR = Math.round(commission);
+
+    return {
+      propertyId: prop.id,
+      name: prop.name,
+      occupancyPct: Math.round((occupiedNights / daysInMonth) * 100),
+      gross: grossR,
+      commission: commR,
+      ownerPayout: grossR - commR,
+      revpar: daysInMonth > 0 ? Math.round((grossR / daysInMonth) * 10) / 10 : 0,
+      bookings: financialBookings.length,
+    };
+  }).sort((a, b) => b.gross - a.gross);
+}
+
+// ─── Monthly revenue bars ─────────────────────────────────────────────────────
+
+export type MonthlyRevenueBar = {
+  month: string;
+  label: string;
+  gross: number;
+  commission: number;
+  net: number;
+};
+
+export async function getMonthlyRevenueBars(userId: string, months = 12): Promise<MonthlyRevenueBar[]> {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - months + 1, 1);
+
+  const [dbUser, bookings] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { commissionRate: true } }),
+    prisma.booking.findMany({
+      where: {
+        property: { ownerId: userId },
+        status: { in: ACTIVE_STATUSES },
+        checkIn: { gte: start },
+        totalAmount: { not: null },
+      },
+      select: {
+        checkIn: true,
+        totalAmount: true,
+        property: { select: { commissionRate: true } },
+      },
+    }),
+  ]);
+
+  const fallbackRate = dbUser?.commissionRate ? Number(dbUser.commissionRate) : 0.15;
+
+  const slots = new Map<string, MonthlyRevenueBar>();
+  for (let i = 0; i < months; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - months + 1 + i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    slots.set(key, {
+      month: key,
+      label: d.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" }),
+      gross: 0, commission: 0, net: 0,
+    });
+  }
+
+  for (const b of bookings) {
+    const d = new Date(b.checkIn);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const slot = slots.get(key);
+    if (slot) {
+      const gross = Number(b.totalAmount ?? 0);
+      const rate = b.property.commissionRate != null ? Number(b.property.commissionRate) : fallbackRate;
+      slot.gross += gross;
+      slot.commission += gross * rate;
+    }
+  }
+
+  return Array.from(slots.values()).map(s => ({
+    ...s,
+    gross: Math.round(s.gross),
+    commission: Math.round(s.commission),
+    net: Math.round(s.gross - s.commission),
+  }));
+}
